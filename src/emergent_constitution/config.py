@@ -32,3 +32,13 @@ class SimulationConfig(BaseModel):
     observer_interval: int = Field(default=5, ge=1)
     trade_interval: int = Field(default=5, ge=1)
     coalition_interval: int = Field(default=10, ge=1)
+    use_llm: bool = Field(
+        default=False,
+        description="Whether to use LLM-based citizen logic for a subset of agents.",
+    )
+    llm_fraction: float = Field(
+        default=0.1,
+        ge=0.0,
+        le=1.0,
+        description="Fraction of agents that use LLM reasoning each tick (0.0-1.0).",
+    )
