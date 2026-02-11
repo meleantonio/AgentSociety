@@ -88,3 +88,52 @@ class TestIntegrationPhase2:
         for agent in output.final_agent_states:
             assert agent.wealth >= 0.0
             assert agent.productivity > 0.0
+
+
+class TestIntegrationPhase3:
+    """Phase 3 integration tests — observer output and history."""
+
+    def test_full_output_structure(self):
+        """SimulationOutput has non-empty history, valid constitution, all agents."""
+        config = SimulationConfig(num_agents=10, max_ticks=20, seed=42, observer_interval=5)
+        output = Lead(config).run()
+        assert len(output.history) > 0
+        assert output.constitution is not None
+        assert len(output.final_agent_states) == 10
+        assert output.seed == 42
+        assert output.total_ticks == 20
+
+    def test_gini_evolution(self):
+        """History captures changing Gini over time with 50 agents."""
+        config = SimulationConfig(
+            num_agents=50,
+            max_ticks=200,
+            seed=42,
+            proposal_interval=5,
+            observer_interval=10,
+        )
+        output = Lead(config).run()
+        ginis = [entry.gini for entry in output.history]
+        assert len(ginis) == 200 // 10
+        # Gini values should be valid
+        for g in ginis:
+            assert 0.0 <= g <= 1.0
+        # With heterogeneous agents, Gini should not be constant at 0
+        assert any(g > 0.0 for g in ginis)
+
+    def test_constitution_snapshots_in_history(self):
+        """Each history entry has a constitution snapshot; snapshots differ when rules change."""
+        config = SimulationConfig(
+            num_agents=50,
+            max_ticks=100,
+            seed=42,
+            proposal_interval=5,
+            observer_interval=5,
+        )
+        output = Lead(config).run()
+        for entry in output.history:
+            assert entry.constitution_snapshot is not None
+        # With active governance, at least two snapshots should differ
+        snapshots = [e.constitution_snapshot for e in output.history]
+        unique = {s.model_dump_json() for s in snapshots}
+        assert len(unique) > 1, "Expected constitution snapshots to change over time"

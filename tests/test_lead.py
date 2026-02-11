@@ -97,3 +97,54 @@ class TestLeadPhase2:
             or output.constitution.redistribution_rule.value != "flat"
         )
         assert changed, "Constitution should evolve with 50 agents over 100 ticks"
+
+
+class TestLeadPhase3:
+    """Phase 3 tests — observer statistics and history logging."""
+
+    def test_observations_on_interval_ticks(self):
+        """History entries should only be recorded on observer-interval ticks."""
+        config = SimulationConfig(num_agents=5, max_ticks=20, seed=42, observer_interval=5)
+        lead = Lead(config)
+        lead.run()
+        expected_ticks = {5, 10, 15, 20}
+        actual_ticks = {entry.tick for entry in lead.history}
+        assert actual_ticks == expected_ticks
+
+    def test_history_length_matches_intervals(self):
+        """Number of history entries == max_ticks // observer_interval."""
+        config = SimulationConfig(num_agents=5, max_ticks=20, seed=42, observer_interval=5)
+        output = Lead(config).run()
+        assert len(output.history) == 20 // 5
+
+    def test_history_statistics_valid(self):
+        """All statistics in history entries are within valid ranges."""
+        config = SimulationConfig(num_agents=10, max_ticks=30, seed=42, observer_interval=5)
+        output = Lead(config).run()
+        for entry in output.history:
+            assert 0.0 <= entry.gini <= 1.0, f"Invalid Gini {entry.gini} at tick {entry.tick}"
+            assert entry.mean_wealth >= 0.0
+            assert entry.median_wealth >= 0.0
+            assert entry.total_output > 0.0
+
+    def test_rule_changes_tracked(self):
+        """With active governance, rule changes should appear in history."""
+        config = SimulationConfig(
+            num_agents=50,
+            max_ticks=100,
+            seed=42,
+            proposal_interval=5,
+            observer_interval=5,
+        )
+        output = Lead(config).run()
+        all_changes = [ch for entry in output.history for ch in entry.rule_changes]
+        assert len(all_changes) > 0, "Expected at least one rule change to be tracked"
+
+    def test_deterministic_history(self):
+        """Same seed produces identical history."""
+        config = SimulationConfig(num_agents=10, max_ticks=30, seed=42, observer_interval=5)
+        output1 = Lead(config).run()
+        output2 = Lead(config).run()
+        assert len(output1.history) == len(output2.history)
+        for e1, e2 in zip(output1.history, output2.history, strict=True):
+            assert e1 == e2
