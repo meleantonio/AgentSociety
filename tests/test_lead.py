@@ -39,12 +39,6 @@ class TestLead:
         output = Lead(config).run()
         assert output.seed == 123
 
-    def test_constitution_unchanged_in_phase1(self):
-        """In Phase 1, no proposals pass, so constitution stays at defaults."""
-        config = SimulationConfig(num_agents=5, max_ticks=10, seed=42)
-        output = Lead(config).run()
-        assert output.constitution.tax_rate == 0.0
-
     def test_tick_state_advances(self):
         config = SimulationConfig(num_agents=5, max_ticks=10, seed=42)
         lead = Lead(config)
@@ -57,3 +51,49 @@ class TestLead:
         wealths1 = [a.wealth for a in output1.final_agent_states]
         wealths2 = [a.wealth for a in output2.final_agent_states]
         assert wealths1 != wealths2
+
+
+class TestLeadPhase2:
+    """Phase 2 tests — proposals, voting, and constitution evolution."""
+
+    def test_proposals_on_interval_ticks(self):
+        """Proposals should only be collected on interval ticks."""
+        config = SimulationConfig(num_agents=10, max_ticks=20, seed=42, proposal_interval=5)
+        # Run tick by tick and verify proposals appear only on interval ticks
+        lead2 = Lead(config)
+        for tick in range(1, 21):
+            lead2.tick_state = lead2._advance_tick(tick)
+            if tick % 5 != 0:
+                assert lead2.tick_state.proposals_this_tick == [], (
+                    f"Proposals found on non-interval tick {tick}"
+                )
+
+    def test_determinism_with_proposals(self):
+        """Two runs with same seed produce identical output including proposals/votes."""
+        config = SimulationConfig(num_agents=10, max_ticks=30, seed=42, proposal_interval=5)
+        output1 = Lead(config).run()
+        output2 = Lead(config).run()
+        json1 = output1.model_dump_json(indent=2)
+        json2 = output2.model_dump_json(indent=2)
+        assert json1 == json2
+
+    def test_positive_wealth_preserved(self):
+        """All agents maintain non-negative wealth with active governance."""
+        config = SimulationConfig(num_agents=20, max_ticks=50, seed=42, proposal_interval=5)
+        output = Lead(config).run()
+        for agent in output.final_agent_states:
+            assert agent.wealth >= 0.0, f"Agent {agent.id} has negative wealth: {agent.wealth}"
+
+    def test_constitution_can_change(self):
+        """With enough agents and ticks, the constitution should evolve."""
+        # Use more agents and ticks to increase the chance of proposals passing
+        config = SimulationConfig(num_agents=50, max_ticks=100, seed=42, proposal_interval=5)
+        output = Lead(config).run()
+        # Check if at least one constitutional field changed from defaults
+        changed = (
+            output.constitution.tax_rate != 0.0
+            or output.constitution.property_rule.value != "private"
+            or output.constitution.voting_rule.value != "majority"
+            or output.constitution.redistribution_rule.value != "flat"
+        )
+        assert changed, "Constitution should evolve with 50 agents over 100 ticks"
