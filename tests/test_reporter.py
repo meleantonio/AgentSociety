@@ -94,9 +94,9 @@ class TestGenerateReport:
             total_ticks=50,
         )
         report = generate_report(output)
-        assert "99" in report
-        assert "50" in report
-        assert "3" in report
+        assert "**Seed:** 99" in report
+        assert "**Total ticks:** 50" in report
+        assert "**Number of agents:** 3" in report
 
 
 class TestFormatFinalConstitution:

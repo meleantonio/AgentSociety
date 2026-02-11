@@ -61,7 +61,7 @@ class TestRunSimulation:
     def test_json_output_is_valid(self):
         """JSON output is parseable and has expected keys."""
         parser = build_parser()
-        args = parser.parse_args(["-n", "3", "-t", "5", "--json", "-q"])
+        args = parser.parse_args(["-n", "3", "-t", "5", "-s", "42", "--json", "-q"])
         result = run_simulation(args)
         data = json.loads(result)
         assert "constitution" in data
@@ -169,3 +169,14 @@ class TestCLIEndToEnd:
         )
         assert result.returncode == 0
         assert "0.1.0" in result.stdout
+
+    def test_invalid_config_exits_nonzero(self):
+        """Invalid config (e.g. 0 agents) exits with code 1 and stderr message."""
+        result = subprocess.run(
+            [sys.executable, "-m", "emergent_constitution", "-n", "0"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        assert result.returncode == 1
+        assert "Error" in result.stderr

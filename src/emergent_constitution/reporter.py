@@ -9,7 +9,9 @@ from __future__ import annotations
 import statistics
 
 from emergent_constitution.citizen import compute_gini
-from emergent_constitution.models.history import SimulationOutput
+from emergent_constitution.models.agent import AgentState
+from emergent_constitution.models.constitution import Constitution
+from emergent_constitution.models.history import HistoryEntry, SimulationOutput
 
 
 def generate_report(output: SimulationOutput) -> str:
@@ -48,7 +50,7 @@ def _format_simulation_summary(output: SimulationOutput) -> str:
     )
 
 
-def _format_final_constitution(constitution) -> str:
+def _format_final_constitution(constitution: Constitution) -> str:
     """Format the final constitutional rules as a table.
 
     Args:
@@ -69,7 +71,7 @@ def _format_final_constitution(constitution) -> str:
     )
 
 
-def _format_wealth_distribution(agents: list) -> str:
+def _format_wealth_distribution(agents: list[AgentState]) -> str:
     """Format wealth distribution statistics and quintile breakdown.
 
     Args:
@@ -117,7 +119,7 @@ def _format_wealth_distribution(agents: list) -> str:
     return "\n".join(lines)
 
 
-def _format_constitutional_timeline(history: list) -> str:
+def _format_constitutional_timeline(history: list[HistoryEntry]) -> str:
     """Format a chronological timeline of constitutional changes.
 
     Args:
@@ -145,7 +147,7 @@ def _format_constitutional_timeline(history: list) -> str:
     return "\n".join(lines)
 
 
-def _format_statistics_evolution(history: list) -> str:
+def _format_statistics_evolution(history: list[HistoryEntry]) -> str:
     """Format a table showing how key statistics evolved over time.
 
     Args:

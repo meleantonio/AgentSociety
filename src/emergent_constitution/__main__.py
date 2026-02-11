@@ -66,7 +66,7 @@ def run_simulation(args: argparse.Namespace) -> str:
     output = lead.run()
 
     if args.json_output:
-        return output.model_dump_json(indent=2)
+        return output.model_dump_json(indent=2) + "\n"
     return generate_report(output)
 
 
@@ -85,7 +85,7 @@ def main() -> None:
         sys.exit(1)
 
     if args.output:
-        with open(args.output, "w") as f:
+        with open(args.output, "w", encoding="utf-8") as f:
             f.write(result)
     else:
         print(result, end="")

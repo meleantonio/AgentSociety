@@ -12,6 +12,9 @@ dependencies = [
 readme = "README.md"
 requires-python = ">= 3.10"
 
+[project.scripts]
+emergent-constitution = "emergent_constitution.__main__:main"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
@@ -29,9 +32,6 @@ allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/emergent_constitution"]
-
-[project.scripts]
-emergent-constitution = "emergent_constitution.__main__:main"
 
 [tool.ruff]
 target-version = "py310"
