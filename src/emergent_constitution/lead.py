@@ -12,6 +12,7 @@ from emergent_constitution.citizen import decide_proposal, decide_votes
 from emergent_constitution.config import SimulationConfig
 from emergent_constitution.economics import economic_step
 from emergent_constitution.initialization import initialize_simulation
+from emergent_constitution.llm_citizen import CitizenLLM, PromptBuilder
 from emergent_constitution.models.agent import AgentState
 from emergent_constitution.models.constitution import Constitution
 from emergent_constitution.models.history import HistoryEntry, SimulationOutput
@@ -33,16 +34,53 @@ class Lead:
 
     Args:
         config: Simulation configuration.
+        citizen_llm: Optional LLM-based citizen reasoning implementation.
+            When provided *and* ``config.use_llm`` is True, a fraction of
+            agents (controlled by ``config.llm_fraction``) will use this
+            interface for proposal generation and vote reasoning each tick.
     """
 
-    def __init__(self, config: SimulationConfig) -> None:
+    def __init__(
+        self,
+        config: SimulationConfig,
+        citizen_llm: CitizenLLM | None = None,
+    ) -> None:
         self.config = config
+        self.citizen_llm = citizen_llm
         self.tick_state: TickState
         self.rng: SimulationRNG
         self.history: list[HistoryEntry] = []
         self.last_observed_constitution: Constitution | None = None
         self.tick_state, self.rng = initialize_simulation(config)
         log.info("simulation.initialized", num_agents=config.num_agents, seed=config.seed)
+
+    @property
+    def _use_llm(self) -> bool:
+        """Whether LLM reasoning is active for this run."""
+        return self.config.use_llm and self.citizen_llm is not None
+
+    def _select_llm_agents(self, agents: list[AgentState]) -> set[str]:
+        """Select a subset of agent IDs to use LLM reasoning this tick.
+
+        The subset size is ``ceil(len(agents) * config.llm_fraction)``,
+        selected via seeded RNG for determinism.
+
+        Args:
+            agents: Current agent states.
+
+        Returns:
+            Set of agent IDs that should use LLM reasoning.
+        """
+        if not self._use_llm:
+            return set()
+
+        count = max(1, int(len(agents) * self.config.llm_fraction + 0.5))
+        count = min(count, len(agents))
+
+        # Deterministic selection: shuffle a copy and take first `count`
+        ids = [a.id for a in agents]
+        self.rng.shuffle(ids)
+        return set(ids[:count])
 
     def run(self) -> SimulationOutput:
         """Execute all ticks and return the final simulation output.
@@ -106,6 +144,10 @@ class Lead:
         Shuffles agent order via self.rng for fairness. Each agent may produce
         at most one proposal, which is validated before inclusion.
 
+        When LLM reasoning is active, a subset of agents (selected via
+        ``_select_llm_agents``) use the ``CitizenLLM`` interface; the rest
+        use the deterministic rule-based logic.
+
         Args:
             tick: Current tick number.
             agents: Current agent states (read-only copies).
@@ -117,17 +159,29 @@ class Lead:
         if tick % self.config.proposal_interval != 0:
             return []
 
+        llm_ids = self._select_llm_agents(agents)
+
         # Shuffle for fairness (deterministic via seeded RNG)
         agent_order = list(agents)
         self.rng.shuffle(agent_order)
 
         proposals: list[Proposal] = []
         for agent in agent_order:
-            proposal = decide_proposal(agent, constitution, agents, self.rng)
+            if agent.id in llm_ids and self.citizen_llm is not None:
+                context = PromptBuilder.build_proposal_prompt(agent, constitution, agents)
+                proposal = self.citizen_llm.generate_proposal(agent, constitution, context)
+            else:
+                proposal = decide_proposal(agent, constitution, agents, self.rng)
+
             if proposal is not None and validate_proposal(proposal):
                 proposals.append(proposal)
 
-        log.info("proposals.collected", tick=tick, count=len(proposals))
+        log.info(
+            "proposals.collected",
+            tick=tick,
+            count=len(proposals),
+            llm_agents=len(llm_ids),
+        )
         return proposals
 
     def _run_votes(
@@ -138,8 +192,9 @@ class Lead:
     ) -> list[VoteOutcome]:
         """Run votes on all proposals.
 
-        Each agent votes on all proposals. Results are tallied according to
-        the current voting rule.
+        Each agent votes on all proposals. When LLM reasoning is active,
+        the selected subset uses the ``CitizenLLM`` interface per proposal;
+        the rest use the deterministic rule-based logic.
 
         Args:
             proposals: Proposals to vote on.
@@ -153,17 +208,29 @@ class Lead:
             return []
 
         total_eligible = len(agents)
+        llm_ids = self._select_llm_agents(agents)
 
         # Collect each agent's votes on all proposals
         all_agent_votes: dict[str, dict[str, bool]] = {}
         for agent in agents:
-            all_agent_votes[agent.id] = decide_votes(
-                agent,
-                constitution,
-                proposals,
-                agents,
-                self.rng,
-            )
+            if agent.id in llm_ids and self.citizen_llm is not None:
+                # LLM path: vote on each proposal individually
+                votes_for_agent: dict[str, bool] = {}
+                for proposal in proposals:
+                    context = PromptBuilder.build_vote_prompt(
+                        agent, constitution, proposal, agents
+                    )
+                    vote = self.citizen_llm.reason_vote(agent, constitution, proposal, context)
+                    votes_for_agent[proposal.proposer_id] = vote
+                all_agent_votes[agent.id] = votes_for_agent
+            else:
+                all_agent_votes[agent.id] = decide_votes(
+                    agent,
+                    constitution,
+                    proposals,
+                    agents,
+                    self.rng,
+                )
 
         # Tally per proposal
         outcomes: list[VoteOutcome] = []
