@@ -66,3 +66,27 @@ def sample_agents() -> list[AgentState]:
             value_vector=ValueVector(equality=0.8, liberty=0.2),
         ),
     ]
+
+
+@pytest.fixture
+def high_equality_agent() -> AgentState:
+    """Agent strongly favoring equality (low wealth)."""
+    return AgentState(
+        id="agent_eq",
+        wealth=50.0,
+        productivity=10.0,
+        utility_params=UtilityParams(alpha=0.4, beta=0.3, gamma=0.3),
+        value_vector=ValueVector(equality=0.9, liberty=0.1),
+    )
+
+
+@pytest.fixture
+def high_liberty_agent() -> AgentState:
+    """Agent strongly favoring liberty (high wealth)."""
+    return AgentState(
+        id="agent_lib",
+        wealth=200.0,
+        productivity=15.0,
+        utility_params=UtilityParams(alpha=0.5, beta=0.3, gamma=0.2),
+        value_vector=ValueVector(equality=0.1, liberty=0.9),
+    )

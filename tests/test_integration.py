@@ -41,3 +41,50 @@ class TestIntegration:
         assert len(output.final_agent_states) == 50
         for agent in output.final_agent_states:
             assert agent.wealth >= 0.0
+
+
+class TestIntegrationPhase2:
+    """Phase 2 integration tests — constitution evolution and determinism."""
+
+    def test_constitution_evolves(self):
+        """With 50 agents over 200 ticks, the constitution should change from defaults."""
+        config = SimulationConfig(
+            num_agents=50,
+            max_ticks=200,
+            seed=42,
+            proposal_interval=5,
+        )
+        output = Lead(config).run()
+        changed = (
+            output.constitution.tax_rate != 0.0
+            or output.constitution.property_rule.value != "private"
+            or output.constitution.voting_rule.value != "majority"
+            or output.constitution.redistribution_rule.value != "flat"
+        )
+        assert changed, "Constitution should evolve with 50 agents over 200 ticks"
+
+    def test_full_determinism_with_governance(self):
+        """Full determinism: identical seed produces identical constitution + agent states."""
+        config = SimulationConfig(
+            num_agents=20,
+            max_ticks=50,
+            seed=77,
+            proposal_interval=5,
+        )
+        output1 = Lead(config).run()
+        output2 = Lead(config).run()
+        # Compare full JSON — covers constitution, agent states, history
+        assert output1.model_dump_json() == output2.model_dump_json()
+
+    def test_governance_preserves_wealth_invariants(self):
+        """Even with active governance, wealth invariants hold."""
+        config = SimulationConfig(
+            num_agents=30,
+            max_ticks=100,
+            seed=42,
+            proposal_interval=5,
+        )
+        output = Lead(config).run()
+        for agent in output.final_agent_states:
+            assert agent.wealth >= 0.0
+            assert agent.productivity > 0.0
