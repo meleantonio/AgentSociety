@@ -12,6 +12,7 @@ from emergent_constitution.citizen import compute_gini
 from emergent_constitution.models.agent import AgentState
 from emergent_constitution.models.constitution import Constitution
 from emergent_constitution.models.history import HistoryEntry, SimulationOutput
+from emergent_constitution.observer import compute_pareto_efficiency
 
 
 def generate_report(output: SimulationOutput) -> str:
@@ -86,6 +87,7 @@ def _format_wealth_distribution(agents: list[AgentState]) -> str:
     wealths = [a.wealth for a in agents]
     n = len(wealths)
     gini = compute_gini(wealths)
+    pareto_score = compute_pareto_efficiency(agents)
     mean = statistics.mean(wealths)
     median = statistics.median(wealths)
     stdev = statistics.stdev(wealths) if n >= 2 else "N/A"
@@ -100,6 +102,7 @@ def _format_wealth_distribution(agents: list[AgentState]) -> str:
         f"- **Median:** {median:.2f}",
         f"- **Std dev:** {stdev_str}",
         f"- **Gini coefficient:** {gini:.4f}",
+        f"- **Pareto efficiency:** {pareto_score:.4f}",
     ]
 
     # Quintile breakdown (only if enough agents)
@@ -154,21 +157,23 @@ def _format_statistics_evolution(history: list[HistoryEntry]) -> str:
         history: List of HistoryEntry objects.
 
     Returns:
-        Markdown table of Gini, total output, mean/median wealth per observation tick.
+        Markdown table of Gini, Pareto score, total output,
+        mean/median wealth per observation tick.
     """
     if not history:
         return "## Statistics Over Time\n\nNo observations recorded."
 
     lines = [
         "## Statistics Over Time\n",
-        "| Tick | Gini | Total Output | Mean Wealth | Median Wealth |",
-        "| --- | --- | --- | --- | --- |",
+        "| Tick | Gini | Pareto | Total Output | Mean Wealth | Median Wealth |",
+        "| --- | --- | --- | --- | --- | --- |",
     ]
 
     for entry in history:
         lines.append(
             f"| {entry.tick} "
             f"| {entry.gini:.4f} "
+            f"| {entry.pareto_score:.4f} "
             f"| {entry.total_output:.2f} "
             f"| {entry.mean_wealth:.2f} "
             f"| {entry.median_wealth:.2f} |"
