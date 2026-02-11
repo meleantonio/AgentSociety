@@ -126,6 +126,7 @@ def observe_tick(
     total_output = sum(a.productivity for a in agents)
     pareto_score = compute_pareto_efficiency(agents)
     rule_changes = _detect_rule_changes(prev_constitution, constitution)
+    num_coalitions = len({a.coalition_id for a in agents if a.coalition_id is not None})
 
     return HistoryEntry(
         tick=tick,
@@ -136,6 +137,7 @@ def observe_tick(
         pareto_score=pareto_score,
         rule_changes=rule_changes,
         constitution_snapshot=constitution.model_copy(deep=True),
+        num_coalitions=num_coalitions,
     )
 
 
