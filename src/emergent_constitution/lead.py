@@ -17,6 +17,7 @@ from emergent_constitution.models.constitution import Constitution
 from emergent_constitution.models.history import HistoryEntry, SimulationOutput
 from emergent_constitution.models.proposal import Proposal, VoteOutcome
 from emergent_constitution.models.tick import TickState
+from emergent_constitution.observer import observe_tick
 from emergent_constitution.rng import SimulationRNG
 from emergent_constitution.voting import (
     apply_passed_proposals,
@@ -39,6 +40,7 @@ class Lead:
         self.tick_state: TickState
         self.rng: SimulationRNG
         self.history: list[HistoryEntry] = []
+        self.last_observed_constitution: Constitution | None = None
         self.tick_state, self.rng = initialize_simulation(config)
         log.info("simulation.initialized", num_agents=config.num_agents, seed=config.seed)
 
@@ -210,11 +212,23 @@ class Lead:
         agents: list[AgentState],
         constitution: Constitution,
     ) -> None:
-        """Record observation statistics. Phase 3 stub: no-op.
+        """Record observation statistics at observer-interval ticks.
 
         Args:
             tick: Current tick number.
             agents: Current agent states.
             constitution: Current constitution.
         """
-        _ = tick, agents, constitution
+        if tick % self.config.observer_interval != 0:
+            return
+
+        entry = observe_tick(tick, agents, constitution, self.last_observed_constitution)
+        self.history.append(entry)
+        self.last_observed_constitution = constitution.model_copy(deep=True)
+        log.info(
+            "observation.recorded",
+            tick=tick,
+            gini=round(entry.gini, 4),
+            mean_wealth=round(entry.mean_wealth, 2),
+            rule_changes=len(entry.rule_changes),
+        )
