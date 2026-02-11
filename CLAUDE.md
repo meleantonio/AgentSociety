@@ -10,15 +10,24 @@ This project is designed to showcase Agent Teams at scale, leveraging Claude's 1
 
 ## Project Status
 
-The project is in the **specification/planning phase**. All specification documents live under `AgentSocietyPlanning/`:
+**Implementation is complete.** All 6 requirements (REQ-001 through REQ-006) and both properties (PROP-001, PROP-002) are implemented. 186 tests, 96% coverage.
+
+### Implemented Phases
+
+- **Phase 1** (PR #1) — Core simulation loop and state: Pydantic data models, agent initialization, Lead tick loop, economics engine (production, taxation, redistribution). REQ-001, REQ-002, PROP-002.
+- **Phase 2** (PR #2) — Proposals and voting: Proposal collection/validation, voting mechanisms (majority/supermajority/unanimity), citizen decision logic (rule-based). REQ-003, REQ-004, PROP-001.
+- **Phase 3** (PR #3) — Observer and output: Observer statistics (Gini, total output, Pareto), history logging. REQ-005, REQ-006.
+- **Phase 4** (PR #4) — Reporter and CLI: Markdown report generator, CLI entry point (`python -m emergent_constitution`).
+
+### Spec Documents
+
+Original specification documents live under `AgentSocietyPlanning/`:
 
 - `spec/intent.md` — Project goals and motivation
-- `spec/requirements.md` — EARS-formatted requirements (REQ-001 through REQ-006, PROP-001, PROP-002)
+- `spec/requirements.md` — EARS-formatted requirements
 - `spec/design.md` — Architecture, data models, component interfaces, error handling
-- `spec/tasks.md` — Three-phase implementation plan with traceability to requirements
+- `spec/tasks.md` — Implementation plan with traceability to requirements
 - `steering/coding-standards.md` — Coding patterns and constraints
-
-**Always consult these spec documents before implementing.** Implementation must trace back to the requirements.
 
 ## Architecture
 
@@ -53,7 +62,7 @@ Initial config (N agents, endowments, preferences, seed)
 
 ## Data Models
 
-Seven core models (implement as Python dataclasses or Pydantic):
+Seven core Pydantic models in `src/emergent_constitution/models/`:
 
 - **AgentState** — id, wealth, productivity, utility_params, value_vector, coalition_id
 - **Constitution** — property_rule, tax_rate, voting_rule, redistribution_rule (mutable; schema-validated)
@@ -63,13 +72,20 @@ Seven core models (implement as Python dataclasses or Pydantic):
 - **HistoryEntry** — tick, gini, total_output, rule_changes
 - **Output** — constitution, history, final_agent_states
 
-## Implementation Phases
+## Key Source Files
 
-**Phase 1 — Core simulation loop and state** (Tasks 1-2): Data models, initialization, Lead tick loop with economic step (production, tax, redistribution). Traces to REQ-001, REQ-002, PROP-002.
-
-**Phase 2 — Proposals and voting** (Tasks 3-4): Proposal collection/validation, voting mechanism (majority/supermajority), citizen decision logic (rule-based or LLM). Traces to REQ-003, REQ-004, PROP-001.
-
-**Phase 3 — Observer and output** (Tasks 5-6): Observer statistics, history logging, constitutional summary generation. Traces to REQ-005, REQ-006.
+- `src/emergent_constitution/models/` — Pydantic data models (agent, constitution, history, proposal, tick)
+- `src/emergent_constitution/config.py` — `SimulationConfig`
+- `src/emergent_constitution/initialization.py` — Agent/state creation
+- `src/emergent_constitution/economics.py` — Production, tax, redistribution
+- `src/emergent_constitution/citizen.py` — Proposal/vote decision logic
+- `src/emergent_constitution/voting.py` — Vote tallying, proposal validation
+- `src/emergent_constitution/lead.py` — Lead tick loop (Governor)
+- `src/emergent_constitution/observer.py` — Statistics computation (Gini, Pareto)
+- `src/emergent_constitution/reporter.py` — Markdown report generation
+- `src/emergent_constitution/rng.py` — Seeded RNG wrapper (PROP-001)
+- `src/emergent_constitution/logging.py` — structlog configuration
+- `src/emergent_constitution/__main__.py` — CLI entry point
 
 ## Critical Design Constraints
 
@@ -80,10 +96,39 @@ Seven core models (implement as Python dataclasses or Pydantic):
 - **Numerical stability:** Cap or abort on NaN/Inf values in wealth or utility calculations.
 - **Sandboxed citizen logic:** No network or file access from citizen logic except via Lead-provided state.
 
+## Running
+
+```bash
+# Default: 50 agents, 100 ticks, seed 42
+python -m emergent_constitution
+
+# Custom parameters
+python -m emergent_constitution -n 100 -t 200 -s 123
+
+# Save report to file
+python -m emergent_constitution -o report.md
+
+# JSON output
+python -m emergent_constitution --json
+
+# Quiet mode (suppress logging)
+python -m emergent_constitution -q
+```
+
+## Testing
+
+```bash
+# Run all tests
+pytest
+
+# With coverage
+pytest --cov=emergent_constitution --cov-report=term-missing
+```
+
 ## Tech Stack
 
 - **Language:** Python (3.10+)
-- **State models:** dataclasses or Pydantic
+- **State models:** Pydantic
 - **Formatter/linter:** Ruff (`ruff format .`, `ruff check .`)
-- **Testing:** pytest
+- **Testing:** pytest (186 tests, 96% coverage)
 - **Orchestration:** Single-process tick loop
