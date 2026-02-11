@@ -17,8 +17,10 @@ class HistoryEntry(BaseModel):
         total_output: Total production output this tick.
         mean_wealth: Mean agent wealth.
         median_wealth: Median agent wealth.
+        pareto_score: Pareto efficiency score (1.0 = fully efficient).
         rule_changes: List of rule-change descriptions this period.
         constitution_snapshot: Copy of the constitution at this tick.
+        num_coalitions: Number of distinct coalitions at this tick.
     """
 
     tick: int = Field(ge=0)
@@ -26,8 +28,10 @@ class HistoryEntry(BaseModel):
     total_output: float = Field(ge=0.0)
     mean_wealth: float = Field(ge=0.0)
     median_wealth: float = Field(ge=0.0)
+    pareto_score: float = Field(ge=0.0, le=1.0, default=1.0)
     rule_changes: list[str] = Field(default_factory=list)
     constitution_snapshot: Constitution
+    num_coalitions: int = Field(default=0, ge=0)
 
 
 class SimulationOutput(BaseModel):

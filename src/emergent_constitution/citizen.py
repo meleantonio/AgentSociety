@@ -13,8 +13,14 @@ from emergent_constitution.models.constitution import (
     RedistributionRule,
     VotingRule,
 )
-from emergent_constitution.models.proposal import Proposal
+from emergent_constitution.models.proposal import Proposal, TradeOffer
 from emergent_constitution.rng import SimulationRNG
+
+# Probability of an agent skipping trade generation (controls trade density).
+_TRADE_SKIP_PROBABILITY = 0.70
+
+# Fraction of the buyer's wealth offered in a trade.
+_TRADE_WEALTH_FRACTION = 0.05
 
 # Maps each constitutional dimension to (equality-preferred value, liberty-preferred value).
 _PREFERRED_VALUES: dict[str, tuple[object, object]] = {
@@ -103,6 +109,73 @@ def decide_proposal(
         rule_key=best_key,
         proposed_value=preferred_value,
         proposer_id=agent.id,
+    )
+
+
+def decide_trade(
+    agent: AgentState,
+    all_agents: list[AgentState],
+    constitution: Constitution,
+    rng: SimulationRNG,
+) -> TradeOffer | None:
+    """Decide whether to initiate a bilateral trade (sell labor for wealth).
+
+    Agents with above-median productivity and below-median wealth may offer
+    to trade. The buyer is selected deterministically via rng.choice from
+    agents with above-median wealth. The trade amount is a small fraction
+    of the buyer's wealth.
+
+    Args:
+        agent: The agent's current state.
+        all_agents: All agent states (for median calculations).
+        constitution: The current constitution (reserved for future trade rules).
+        rng: Seeded RNG for deterministic gating and buyer selection.
+
+    Returns:
+        A TradeOffer, or None if the agent chooses not to trade.
+    """
+    _ = constitution  # reserved for future trade-rule logic
+
+    # Probabilistic gating — most agents skip trading each tick
+    if rng.random() > (1 - _TRADE_SKIP_PROBABILITY):
+        return None
+
+    # Need at least 2 agents to trade
+    if len(all_agents) < 2:
+        return None
+
+    # Compute medians for wealth and productivity
+    sorted_wealth = sorted(a.wealth for a in all_agents)
+    sorted_prod = sorted(a.productivity for a in all_agents)
+    n = len(sorted_wealth)
+    if n % 2 == 0:
+        median_wealth = (sorted_wealth[n // 2 - 1] + sorted_wealth[n // 2]) / 2
+        median_prod = (sorted_prod[n // 2 - 1] + sorted_prod[n // 2]) / 2
+    else:
+        median_wealth = sorted_wealth[n // 2]
+        median_prod = sorted_prod[n // 2]
+
+    # Seller criterion: above-median productivity AND below-median wealth
+    if agent.productivity <= median_prod or agent.wealth >= median_wealth:
+        return None
+
+    # Find potential buyers: agents with above-median wealth (excluding self)
+    potential_buyers = [a for a in all_agents if a.id != agent.id and a.wealth > median_wealth]
+    if not potential_buyers:
+        return None
+
+    # Deterministic buyer selection
+    buyer = rng.choice(potential_buyers)
+
+    # Trade amount: fraction of buyer's wealth
+    amount = round(buyer.wealth * _TRADE_WEALTH_FRACTION, 4)
+    if amount <= 0.0:
+        return None
+
+    return TradeOffer(
+        seller_id=agent.id,
+        buyer_id=buyer.id,
+        amount=amount,
     )
 
 

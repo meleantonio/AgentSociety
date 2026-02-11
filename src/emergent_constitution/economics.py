@@ -7,12 +7,17 @@ from __future__ import annotations
 
 import math
 
+import structlog
+
 from emergent_constitution.models.agent import AgentState
 from emergent_constitution.models.constitution import (
     Constitution,
     PropertyRule,
     RedistributionRule,
 )
+from emergent_constitution.models.proposal import TradeOffer
+
+log = structlog.get_logger()
 
 
 class NumericalInstabilityError(Exception):
@@ -137,6 +142,56 @@ def apply_redistribution(
         a.model_copy(update={"wealth": a.wealth + tax_revenue * (w / total_weight)})
         for a, w in zip(agents, weights, strict=True)
     ]
+
+
+def apply_trades(
+    agents: list[AgentState],
+    trades: list[TradeOffer],
+) -> list[AgentState]:
+    """Apply bilateral trades: transfer wealth from buyers to sellers.
+
+    Each trade is validated individually. Invalid trades (buyer lacks funds,
+    amount not positive, unknown agent IDs) are silently skipped. Trades are
+    applied sequentially in the order provided.
+
+    Args:
+        agents: Current agent states (not mutated).
+        trades: List of trade offers to apply.
+
+    Returns:
+        New agent states with trade transfers applied.
+    """
+    # Build a mutable wealth map from copies
+    wealth_map: dict[str, float] = {a.id: a.wealth for a in agents}
+    agent_ids = set(wealth_map.keys())
+
+    for trade in trades:
+        # Validate agent IDs exist
+        if trade.seller_id not in agent_ids or trade.buyer_id not in agent_ids:
+            log.debug("trade.skipped.unknown_agent", trade=trade)
+            continue
+
+        # Validate amount is positive
+        if trade.amount <= 0.0:
+            log.debug("trade.skipped.non_positive_amount", trade=trade)
+            continue
+
+        # Validate buyer has enough wealth
+        if wealth_map[trade.buyer_id] < trade.amount:
+            log.debug(
+                "trade.skipped.insufficient_funds",
+                buyer_id=trade.buyer_id,
+                buyer_wealth=wealth_map[trade.buyer_id],
+                amount=trade.amount,
+            )
+            continue
+
+        # Execute the transfer
+        wealth_map[trade.buyer_id] -= trade.amount
+        wealth_map[trade.seller_id] += trade.amount
+
+    # Reconstruct agent list with updated wealth values
+    return [a.model_copy(update={"wealth": wealth_map[a.id]}) for a in agents]
 
 
 def economic_step(agents: list[AgentState], constitution: Constitution) -> list[AgentState]:

@@ -9,9 +9,11 @@ from __future__ import annotations
 import statistics
 
 from emergent_constitution.citizen import compute_gini
+from emergent_constitution.coalition import compute_coalition_stats
 from emergent_constitution.models.agent import AgentState
 from emergent_constitution.models.constitution import Constitution
 from emergent_constitution.models.history import HistoryEntry, SimulationOutput
+from emergent_constitution.observer import compute_pareto_efficiency
 
 
 def generate_report(output: SimulationOutput) -> str:
@@ -27,6 +29,7 @@ def generate_report(output: SimulationOutput) -> str:
         _format_simulation_summary(output),
         _format_final_constitution(output.constitution),
         _format_wealth_distribution(output.final_agent_states),
+        _format_coalition_summary(output.final_agent_states),
         _format_constitutional_timeline(output.history),
         _format_statistics_evolution(output.history),
     ]
@@ -86,6 +89,7 @@ def _format_wealth_distribution(agents: list[AgentState]) -> str:
     wealths = [a.wealth for a in agents]
     n = len(wealths)
     gini = compute_gini(wealths)
+    pareto_score = compute_pareto_efficiency(agents)
     mean = statistics.mean(wealths)
     median = statistics.median(wealths)
     stdev = statistics.stdev(wealths) if n >= 2 else "N/A"
@@ -100,6 +104,7 @@ def _format_wealth_distribution(agents: list[AgentState]) -> str:
         f"- **Median:** {median:.2f}",
         f"- **Std dev:** {stdev_str}",
         f"- **Gini coefficient:** {gini:.4f}",
+        f"- **Pareto efficiency:** {pareto_score:.4f}",
     ]
 
     # Quintile breakdown (only if enough agents)
@@ -147,6 +152,37 @@ def _format_constitutional_timeline(history: list[HistoryEntry]) -> str:
     return "\n".join(lines)
 
 
+def _format_coalition_summary(agents: list[AgentState]) -> str:
+    """Format a summary of coalition sizes and compositions.
+
+    Args:
+        agents: List of final AgentState objects.
+
+    Returns:
+        Markdown section with coalition statistics table.
+    """
+    stats = compute_coalition_stats(agents)
+    if not stats:
+        return "## Coalition Summary\n\nNo coalitions formed."
+
+    lines = [
+        "## Coalition Summary\n",
+        f"**Number of coalitions:** {len(stats)}\n",
+        "| Coalition | Size | Mean Wealth | Mean Equality |",
+        "| --- | --- | --- | --- |",
+    ]
+
+    for info in stats.values():
+        lines.append(
+            f"| {info.coalition_id} "
+            f"| {info.size} "
+            f"| {info.mean_wealth:.2f} "
+            f"| {info.mean_equality:.4f} |"
+        )
+
+    return "\n".join(lines)
+
+
 def _format_statistics_evolution(history: list[HistoryEntry]) -> str:
     """Format a table showing how key statistics evolved over time.
 
@@ -154,24 +190,27 @@ def _format_statistics_evolution(history: list[HistoryEntry]) -> str:
         history: List of HistoryEntry objects.
 
     Returns:
-        Markdown table of Gini, total output, mean/median wealth per observation tick.
+        Markdown table of Gini, Pareto score, total output, mean/median wealth,
+        and coalition count per observation tick.
     """
     if not history:
         return "## Statistics Over Time\n\nNo observations recorded."
 
     lines = [
         "## Statistics Over Time\n",
-        "| Tick | Gini | Total Output | Mean Wealth | Median Wealth |",
-        "| --- | --- | --- | --- | --- |",
+        "| Tick | Gini | Pareto | Total Output | Mean Wealth | Median Wealth | Coalitions |",
+        "| --- | --- | --- | --- | --- | --- | --- |",
     ]
 
     for entry in history:
         lines.append(
             f"| {entry.tick} "
             f"| {entry.gini:.4f} "
+            f"| {entry.pareto_score:.4f} "
             f"| {entry.total_output:.2f} "
             f"| {entry.mean_wealth:.2f} "
-            f"| {entry.median_wealth:.2f} |"
+            f"| {entry.median_wealth:.2f} "
+            f"| {entry.num_coalitions} |"
         )
 
     return "\n".join(lines)

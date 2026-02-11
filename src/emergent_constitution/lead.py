@@ -8,15 +8,16 @@ from __future__ import annotations
 
 import structlog
 
-from emergent_constitution.citizen import decide_proposal, decide_votes
+from emergent_constitution.citizen import decide_proposal, decide_trade, decide_votes
+from emergent_constitution.coalition import form_coalitions
 from emergent_constitution.config import SimulationConfig
-from emergent_constitution.economics import economic_step
+from emergent_constitution.economics import apply_trades, economic_step
 from emergent_constitution.initialization import initialize_simulation
 from emergent_constitution.llm_citizen import CitizenLLM, PromptBuilder
 from emergent_constitution.models.agent import AgentState
 from emergent_constitution.models.constitution import Constitution
 from emergent_constitution.models.history import HistoryEntry, SimulationOutput
-from emergent_constitution.models.proposal import Proposal, VoteOutcome
+from emergent_constitution.models.proposal import Proposal, TradeOffer, VoteOutcome
 from emergent_constitution.models.tick import TickState
 from emergent_constitution.observer import observe_tick
 from emergent_constitution.rng import SimulationRNG
@@ -119,8 +120,24 @@ class Lead:
         votes = self._run_votes(proposals, current_agents, current_constitution)
         current_constitution = self._apply_vote_outcomes(votes, current_constitution)
 
+        # Trade step
+        trades = self._collect_trades(tick, current_agents, current_constitution)
+        if trades:
+            current_agents = apply_trades(current_agents, trades)
+
         # Economic step
         updated_agents = economic_step(current_agents, current_constitution)
+
+        # Coalition formation (periodic)
+        if tick % self.config.coalition_interval == 0:
+            updated_agents = form_coalitions(updated_agents, self.rng)
+            log.info(
+                "coalitions.formed",
+                tick=tick,
+                num_coalitions=len(
+                    {a.coalition_id for a in updated_agents if a.coalition_id is not None}
+                ),
+            )
 
         # Observation
         self._observe(tick, updated_agents, current_constitution)
@@ -131,6 +148,7 @@ class Lead:
             constitution=current_constitution,
             proposals_this_tick=proposals,
             votes=votes,
+            trades_this_tick=trades,
         )
 
     def _collect_proposals(
@@ -183,6 +201,41 @@ class Lead:
             llm_agents=len(llm_ids),
         )
         return proposals
+
+    def _collect_trades(
+        self,
+        tick: int,
+        agents: list[AgentState],
+        constitution: Constitution,
+    ) -> list[TradeOffer]:
+        """Collect bilateral trade offers from citizens on trade-interval ticks.
+
+        Shuffles agent order via self.rng for fairness. Each agent may produce
+        at most one trade offer.
+
+        Args:
+            tick: Current tick number.
+            agents: Current agent states (read-only copies).
+            constitution: Current constitution.
+
+        Returns:
+            List of trade offers.
+        """
+        if tick % self.config.trade_interval != 0:
+            return []
+
+        # Shuffle for fairness (deterministic via seeded RNG)
+        agent_order = list(agents)
+        self.rng.shuffle(agent_order)
+
+        trades: list[TradeOffer] = []
+        for agent in agent_order:
+            trade = decide_trade(agent, agents, constitution, self.rng)
+            if trade is not None:
+                trades.append(trade)
+
+        log.info("trades.collected", tick=tick, count=len(trades))
+        return trades
 
     def _run_votes(
         self,
