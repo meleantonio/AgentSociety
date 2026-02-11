@@ -19,6 +19,7 @@ class HistoryEntry(BaseModel):
         median_wealth: Median agent wealth.
         rule_changes: List of rule-change descriptions this period.
         constitution_snapshot: Copy of the constitution at this tick.
+        num_coalitions: Number of distinct coalitions at this tick.
     """
 
     tick: int = Field(ge=0)
@@ -28,6 +29,7 @@ class HistoryEntry(BaseModel):
     median_wealth: float = Field(ge=0.0)
     rule_changes: list[str] = Field(default_factory=list)
     constitution_snapshot: Constitution
+    num_coalitions: int = Field(default=0, ge=0)
 
 
 class SimulationOutput(BaseModel):

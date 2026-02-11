@@ -39,6 +39,7 @@ def observe_tick(
     median_wealth = statistics.median(wealths) if wealths else 0.0
     total_output = sum(a.productivity for a in agents)
     rule_changes = _detect_rule_changes(prev_constitution, constitution)
+    num_coalitions = len({a.coalition_id for a in agents if a.coalition_id is not None})
 
     return HistoryEntry(
         tick=tick,
@@ -48,6 +49,7 @@ def observe_tick(
         median_wealth=median_wealth,
         rule_changes=rule_changes,
         constitution_snapshot=constitution.model_copy(deep=True),
+        num_coalitions=num_coalitions,
     )
 
 

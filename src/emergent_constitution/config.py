@@ -18,6 +18,7 @@ class SimulationConfig(BaseModel):
         initial_productivity_std: Std dev of the initial productivity distribution.
         proposal_interval: Proposals are collected every K ticks.
         observer_interval: Observer records stats every K ticks.
+        coalition_interval: Coalitions reform every K ticks.
     """
 
     num_agents: int = Field(default=50, ge=2)
@@ -29,3 +30,4 @@ class SimulationConfig(BaseModel):
     initial_productivity_std: float = Field(default=3.0, ge=0.0)
     proposal_interval: int = Field(default=5, ge=1)
     observer_interval: int = Field(default=5, ge=1)
+    coalition_interval: int = Field(default=10, ge=1)

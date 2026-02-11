@@ -9,6 +9,7 @@ from __future__ import annotations
 import structlog
 
 from emergent_constitution.citizen import decide_proposal, decide_votes
+from emergent_constitution.coalition import form_coalitions
 from emergent_constitution.config import SimulationConfig
 from emergent_constitution.economics import economic_step
 from emergent_constitution.initialization import initialize_simulation
@@ -83,6 +84,17 @@ class Lead:
 
         # Economic step
         updated_agents = economic_step(current_agents, current_constitution)
+
+        # Coalition formation (periodic)
+        if tick % self.config.coalition_interval == 0:
+            updated_agents = form_coalitions(updated_agents, self.rng)
+            log.info(
+                "coalitions.formed",
+                tick=tick,
+                num_coalitions=len(
+                    {a.coalition_id for a in updated_agents if a.coalition_id is not None}
+                ),
+            )
 
         # Observation
         self._observe(tick, updated_agents, current_constitution)
