@@ -29,3 +29,4 @@ class SimulationConfig(BaseModel):
     initial_productivity_std: float = Field(default=3.0, ge=0.0)
     proposal_interval: int = Field(default=5, ge=1)
     observer_interval: int = Field(default=5, ge=1)
+    trade_interval: int = Field(default=5, ge=1)

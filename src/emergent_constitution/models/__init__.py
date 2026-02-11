@@ -8,7 +8,7 @@ from emergent_constitution.models.constitution import (
     VotingRule,
 )
 from emergent_constitution.models.history import HistoryEntry, SimulationOutput
-from emergent_constitution.models.proposal import Proposal, VoteOutcome
+from emergent_constitution.models.proposal import Proposal, TradeOffer, VoteOutcome
 from emergent_constitution.models.tick import TickState
 
 __all__ = [
@@ -20,6 +20,7 @@ __all__ = [
     "RedistributionRule",
     "SimulationOutput",
     "TickState",
+    "TradeOffer",
     "UtilityParams",
     "ValueVector",
     "VoteOutcome",

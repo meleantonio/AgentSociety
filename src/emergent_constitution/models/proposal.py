@@ -21,6 +21,22 @@ class Proposal(BaseModel):
     proposer_id: str
 
 
+class TradeOffer(BaseModel):
+    """A bilateral trade offer between two agents.
+
+    Represents a transfer of wealth from buyer to seller (e.g., buying labor).
+
+    Args:
+        seller_id: ID of the agent selling (receives wealth).
+        buyer_id: ID of the agent buying (pays wealth).
+        amount: Wealth transferred from buyer to seller (must be positive).
+    """
+
+    seller_id: str
+    buyer_id: str
+    amount: float = Field(gt=0.0)
+
+
 class VoteOutcome(BaseModel):
     """Result of voting on a single proposal.
 
