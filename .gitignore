@@ -1,0 +1,30 @@
+# python generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# venv
+.venv
+
+# rye
+.python-version
+requirements.lock
+requirements-dev.lock
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# env
+.env
+.env.*
+
+# coverage
+htmlcov/
+.coverage
+.coverage.*
