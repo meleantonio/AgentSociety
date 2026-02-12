@@ -1,16 +1,26 @@
-"""Simulation configuration."""
+"""Simulation configuration -- v1 and v2.
+
+v1 SimulationConfig retained for backward compat.
+v2 SimulationConfigV2 adds DSGE-HA parameters per spec/design.md section 2.9.
+"""
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from typing import Literal
+
+from pydantic import BaseModel, Field, model_validator
+
+# ============================================================================
+# v1 config (backward compatibility)
+# ============================================================================
 
 
 class SimulationConfig(BaseModel):
-    """Top-level configuration for a simulation run.
+    """Top-level configuration for a simulation run (v1).
 
     Args:
-        num_agents: Number of citizen-agents (≥2).
-        max_ticks: Maximum number of ticks to simulate (≥1).
+        num_agents: Number of citizen-agents (>=2).
+        max_ticks: Maximum number of ticks to simulate (>=1).
         seed: RNG seed for reproducibility (PROP-001).
         initial_wealth_mean: Mean of the initial wealth distribution.
         initial_wealth_std: Std dev of the initial wealth distribution.
@@ -42,3 +52,93 @@ class SimulationConfig(BaseModel):
         le=1.0,
         description="Fraction of agents that use LLM reasoning each tick (0.0-1.0).",
     )
+
+
+# ============================================================================
+# v2 config (DSGE-HA)
+# ============================================================================
+
+
+class SimulationConfigV2(BaseModel):
+    """Full DSGE-HA simulation configuration (v2).
+
+    Implements REQ-034 with ~30 fields covering core, shocks, production,
+    household, intervals, market clearing, LLM, benchmark, and R&D params.
+    """
+
+    # --- Core ---
+    num_agents: int = Field(default=50, ge=20, description="N >= 20 (REQ-001)")
+    max_periods: int = Field(default=100, ge=1, description="T >= 1")
+    seed: int = Field(default=42, description="RNG seed (PROP-001)")
+
+    # --- Shock parameters ---
+    rho_z: float = Field(default=0.9, gt=0.0, lt=1.0, description="Idiosyncratic persistence")
+    sigma_z: float = Field(default=0.2, gt=0.0, description="Idiosyncratic volatility")
+    num_z_states: int = Field(default=5, ge=2, le=50, description="Rouwenhorst grid points")
+    rho_a: float = Field(default=0.95, gt=0.0, lt=1.0, description="Aggregate TFP persistence")
+    sigma_a: float = Field(default=0.01, gt=0.0, description="Aggregate TFP volatility")
+    enable_preference_shocks: bool = Field(
+        default=False, description="REQ-017 optional preference shocks"
+    )
+
+    # --- Production ---
+    alpha: float = Field(default=0.33, gt=0.0, lt=1.0, description="Capital share in Cobb-Douglas")
+    delta: float = Field(default=0.1, gt=0.0, lt=1.0, description="Depreciation rate")
+    min_firm_capital: float = Field(
+        default=10.0, gt=0.0, description="Minimum capital for firm creation"
+    )
+
+    # --- Household ---
+    a_min: float = Field(default=0.0, ge=0.0, description="Borrowing limit (REQ-004)")
+    initial_wealth_mean: float = Field(default=100.0, gt=0.0)
+    initial_wealth_std: float = Field(default=30.0, ge=0.0)
+
+    # --- Intervals ---
+    proposal_interval: int = Field(
+        default=5, ge=1, description="Constitutional proposal every K periods"
+    )
+    observer_interval: int = Field(default=5, ge=1, description="Observation every K periods")
+
+    # --- Market clearing ---
+    tatonnement_max_iter: int = Field(
+        default=100, ge=1, description="Max iterations for price finding"
+    )
+    tatonnement_tolerance: float = Field(default=1e-6, gt=0.0, description="PROP-003 tolerance")
+    tatonnement_step_size: float = Field(default=0.01, gt=0.0, description="Price adjustment step")
+
+    # --- LLM ---
+    use_llm: bool = Field(default=True, description="Default: LLM-driven (REQ-024)")
+    llm_provider: str = Field(default="anthropic", description="Provider name")
+    llm_model: str = Field(default="claude-sonnet-4-5-20250929", description="Model ID")
+    llm_temperature: float = Field(
+        default=0.0, ge=0.0, le=2.0, description="Determinism (PROP-001)"
+    )
+    llm_batch_size: int = Field(default=10, ge=1, description="Agents per batch call (REQ-029)")
+    llm_cache_enabled: bool = Field(default=True, description="Cache identical contexts (REQ-029)")
+
+    # --- Benchmark ---
+    benchmark_mode: bool = Field(default=False, description="Numerical-only mode (REQ-037)")
+    solver_method: Literal["vfi", "egm"] = Field(
+        default="egm", description="'vfi' or 'egm' (REQ-036)"
+    )
+
+    # --- R&D ---
+    rd_success_base_prob: float = Field(
+        default=0.1,
+        ge=0.0,
+        le=1.0,
+        description="Base probability of TFP improvement",
+    )
+    rd_tfp_improvement_mean: float = Field(
+        default=0.05, gt=0.0, description="Mean TFP improvement factor"
+    )
+    rd_tfp_improvement_std: float = Field(
+        default=0.02, ge=0.0, description="Std of TFP improvement factor"
+    )
+
+    @model_validator(mode="after")
+    def _benchmark_disables_llm(self) -> SimulationConfigV2:
+        """If benchmark_mode is enabled, force use_llm to False."""
+        if self.benchmark_mode and self.use_llm:
+            object.__setattr__(self, "use_llm", False)
+        return self
