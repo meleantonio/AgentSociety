@@ -2,14 +2,50 @@
 
 All functions are pure: they take state and return results without
 mutating any inputs.
+
+v1 functions operate on AgentState.
+v2 functions operate on HouseholdState (DSGE-HA model).
+Both share the same greedy clustering algorithm.
 """
 
 from __future__ import annotations
 
+from typing import Protocol, TypeVar, runtime_checkable
+
 from pydantic import BaseModel, Field
 
 from emergent_constitution.models.agent import AgentState
+from emergent_constitution.models.household import HouseholdState, ValueVector
 from emergent_constitution.rng import SimulationRNG
+
+# ============================================================================
+# Protocol for coalition-compatible agent types
+# ============================================================================
+
+
+@runtime_checkable
+class CoalitionAgent(Protocol):
+    """Protocol for agent types that support coalition formation.
+
+    Both AgentState and HouseholdState satisfy this protocol.
+    """
+
+    @property
+    def id(self) -> str: ...
+
+    @property
+    def wealth(self) -> float: ...
+
+    @property
+    def value_vector(self) -> ValueVector: ...
+
+    @property
+    def coalition_id(self) -> str | None: ...
+
+    def model_copy(self, *, update: dict | None = None) -> CoalitionAgent: ...
+
+
+T = TypeVar("T", AgentState, HouseholdState)
 
 
 class CoalitionInfo(BaseModel):
@@ -28,30 +64,33 @@ class CoalitionInfo(BaseModel):
     mean_equality: float = Field(ge=0.0, le=1.0)
 
 
-def form_coalitions(
-    agents: list[AgentState],
+# ============================================================================
+# Generic clustering algorithm (shared by v1 and v2)
+# ============================================================================
+
+
+def _cluster_agents(
+    agents: list[T],
     rng: SimulationRNG,
-    similarity_threshold: float = 0.3,
-) -> list[AgentState]:
-    """Assign agents to coalitions based on value vector similarity.
+    similarity_threshold: float,
+) -> list[T]:
+    """Generic greedy clustering by value vector similarity.
 
     Algorithm:
-        1. Compute pairwise value distance (|eq_i - eq_j|) for all agent pairs.
-        2. Agents with distance < similarity_threshold can form a coalition.
-        3. Use greedy clustering: iterate agents in rng-shuffled order,
-           assign to existing coalition if similar to coalition centroid,
-           or create new coalition.
-        4. Return new agent list with updated coalition_id fields.
+        1. Iterate agents in rng-shuffled order.
+        2. For each agent, check centroid distance to existing coalitions.
+        3. Join the first coalition with distance < threshold, or create new.
+        4. Return new list with updated coalition_id fields.
 
     Coalition IDs are formatted as "coalition_XXXX" with sequential numbering.
 
     Args:
-        agents: Current agent states (not mutated).
+        agents: Agent states (not mutated).
         rng: Seeded RNG for deterministic shuffling.
         similarity_threshold: Maximum value distance for coalition membership.
 
     Returns:
-        New list of AgentState copies with updated coalition_id fields.
+        New list of copies with updated coalition_id fields.
     """
     if not agents:
         return []
@@ -86,15 +125,15 @@ def form_coalitions(
             coalition_members[cid] = [agent_eq]
             agent_coalition[idx] = cid
 
-    # Build new agent list with updated coalition_ids, preserving original order
+    # Build new list with updated coalition_ids, preserving original order
     return [
         agents[i].model_copy(update={"coalition_id": agent_coalition[i]})
         for i in range(len(agents))
     ]
 
 
-def compute_coalition_stats(agents: list[AgentState]) -> dict[str, CoalitionInfo]:
-    """Compute statistics for each coalition.
+def _compute_stats(agents: list[T]) -> dict[str, CoalitionInfo]:
+    """Generic coalition stats computation.
 
     Args:
         agents: Agent states with coalition_id fields populated.
@@ -103,8 +142,7 @@ def compute_coalition_stats(agents: list[AgentState]) -> dict[str, CoalitionInfo
         Mapping of coalition_id to CoalitionInfo. Agents with coalition_id=None
         are excluded.
     """
-    # Group agents by coalition
-    groups: dict[str, list[AgentState]] = {}
+    groups: dict[str, list[T]] = {}
     for agent in agents:
         if agent.coalition_id is not None:
             groups.setdefault(agent.coalition_id, []).append(agent)
@@ -122,3 +160,90 @@ def compute_coalition_stats(agents: list[AgentState]) -> dict[str, CoalitionInfo
         )
 
     return stats
+
+
+# ============================================================================
+# v1 functions (backward compatibility — AgentState)
+# ============================================================================
+
+
+def form_coalitions(
+    agents: list[AgentState],
+    rng: SimulationRNG,
+    similarity_threshold: float = 0.3,
+) -> list[AgentState]:
+    """Assign agents to coalitions based on value vector similarity.
+
+    Algorithm:
+        1. Compute pairwise value distance (|eq_i - eq_j|) for all agent pairs.
+        2. Agents with distance < similarity_threshold can form a coalition.
+        3. Use greedy clustering: iterate agents in rng-shuffled order,
+           assign to existing coalition if similar to coalition centroid,
+           or create new coalition.
+        4. Return new agent list with updated coalition_id fields.
+
+    Coalition IDs are formatted as "coalition_XXXX" with sequential numbering.
+
+    Args:
+        agents: Current agent states (not mutated).
+        rng: Seeded RNG for deterministic shuffling.
+        similarity_threshold: Maximum value distance for coalition membership.
+
+    Returns:
+        New list of AgentState copies with updated coalition_id fields.
+    """
+    return _cluster_agents(agents, rng, similarity_threshold)
+
+
+def compute_coalition_stats(agents: list[AgentState]) -> dict[str, CoalitionInfo]:
+    """Compute statistics for each coalition.
+
+    Args:
+        agents: Agent states with coalition_id fields populated.
+
+    Returns:
+        Mapping of coalition_id to CoalitionInfo. Agents with coalition_id=None
+        are excluded.
+    """
+    return _compute_stats(agents)
+
+
+# ============================================================================
+# v2 functions (DSGE-HA — HouseholdState)
+# ============================================================================
+
+
+def form_coalitions_v2(
+    households: list[HouseholdState],
+    rng: SimulationRNG,
+    similarity_threshold: float = 0.3,
+) -> list[HouseholdState]:
+    """Assign households to coalitions based on value vector similarity.
+
+    Same greedy clustering algorithm as v1 form_coalitions, but operates
+    on HouseholdState (DSGE-HA model).
+
+    Args:
+        households: Current household states (not mutated).
+        rng: Seeded RNG for deterministic shuffling.
+        similarity_threshold: Maximum value distance for coalition membership.
+
+    Returns:
+        New list of HouseholdState copies with updated coalition_id fields.
+    """
+    return _cluster_agents(households, rng, similarity_threshold)
+
+
+def compute_coalition_stats_v2(
+    households: list[HouseholdState],
+) -> dict[str, CoalitionInfo]:
+    """Compute statistics for each coalition from household states.
+
+    Args:
+        households: Household states with coalition_id fields populated.
+
+    Returns:
+        Mapping of coalition_id to CoalitionInfo. Households with
+        coalition_id=None are excluded.
+    """
+    return _compute_stats(households)
