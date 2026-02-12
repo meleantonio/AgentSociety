@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -10,6 +11,10 @@ from pathlib import Path
 import pytest
 
 from emergent_constitution.__main__ import build_parser, run_simulation
+
+# Subprocess tests need PYTHONPATH to find the package under src/.
+_SRC_DIR = str(Path(__file__).resolve().parent.parent / "src")
+_SUBPROCESS_ENV = {**os.environ, "PYTHONPATH": _SRC_DIR}
 
 
 class TestBuildParser:
@@ -109,6 +114,7 @@ class TestCLIEndToEnd:
             capture_output=True,
             text=True,
             timeout=30,
+            env=_SUBPROCESS_ENV,
         )
         assert result.returncode == 0
         assert "# The Emergent Constitution" in result.stdout
@@ -130,6 +136,7 @@ class TestCLIEndToEnd:
             capture_output=True,
             text=True,
             timeout=30,
+            env=_SUBPROCESS_ENV,
         )
         assert result.returncode == 0
         data = json.loads(result.stdout)
@@ -154,6 +161,7 @@ class TestCLIEndToEnd:
             capture_output=True,
             text=True,
             timeout=30,
+            env=_SUBPROCESS_ENV,
         )
         assert result.returncode == 0
         content = out_file.read_text()
@@ -166,6 +174,7 @@ class TestCLIEndToEnd:
             capture_output=True,
             text=True,
             timeout=10,
+            env=_SUBPROCESS_ENV,
         )
         assert result.returncode == 0
         assert "0.1.0" in result.stdout
@@ -177,6 +186,7 @@ class TestCLIEndToEnd:
             capture_output=True,
             text=True,
             timeout=10,
+            env=_SUBPROCESS_ENV,
         )
         assert result.returncode == 1
         assert "Error" in result.stderr
