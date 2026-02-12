@@ -27,10 +27,19 @@ from emergent_constitution.models.market import MarketState
 from emergent_constitution.models.shocks import ShockState
 from emergent_constitution.models.tick import TickState
 from emergent_constitution.rng import SimulationRNG
+from emergent_constitution.shock_generators import (
+    _draw_from_cdf,
+    rouwenhorst_discretize,
+    stationary_distribution,
+)
 
 # ============================================================================
 # Shared helpers
 # ============================================================================
+
+# Re-export for backward compat with test_v2_initialization imports
+_stationary_distribution = stationary_distribution
+_draw_from_distribution = _draw_from_cdf
 
 
 def _safe_log(x: float) -> float:
@@ -120,141 +129,6 @@ def initialize_simulation(
     constitution = create_initial_constitution()
     tick_state = TickState(tick=0, agent_states=agents, constitution=constitution)
     return tick_state, rng
-
-
-# ============================================================================
-# Rouwenhorst discretization (spec section 4.2)
-# ============================================================================
-
-
-def rouwenhorst_discretize(
-    rho: float,
-    sigma: float,
-    n_states: int,
-) -> tuple[list[float], list[list[float]]]:
-    """Discretize AR(1) process into Markov chain using Rouwenhorst method.
-
-    Implements the algorithm from Kopecky & Suen (2010) as described in
-    spec/design.md section 4.2.
-
-    Args:
-        rho: Persistence parameter (0 < rho < 1).
-        sigma: Innovation volatility (sigma > 0).
-        n_states: Number of grid points (>= 2).
-
-    Returns:
-        Tuple of (grid_values, transition_matrix) where grid_values are
-        exp(z) levels and transition_matrix is row-stochastic.
-    """
-    if n_states < 2:
-        msg = f"n_states must be >= 2, got {n_states}"
-        raise ValueError(msg)
-    if not (0.0 < rho < 1.0):
-        msg = f"rho must be in (0, 1), got {rho}"
-        raise ValueError(msg)
-    if sigma <= 0.0:
-        msg = f"sigma must be > 0, got {sigma}"
-        raise ValueError(msg)
-
-    # Step 1: unconditional std dev
-    sigma_z = sigma / math.sqrt(1.0 - rho**2)
-
-    # Step 2: grid bounds
-    z_max = sigma_z * math.sqrt(n_states - 1)
-
-    # Step 3: log grid (equally spaced)
-    if n_states == 1:
-        log_grid = [0.0]
-    else:
-        step = 2.0 * z_max / (n_states - 1)
-        log_grid = [-z_max + i * step for i in range(n_states)]
-
-    # Step 4: transition probability parameter
-    p = (1.0 + rho) / 2.0
-
-    # Step 5: build transition matrix recursively
-    # Base case: 2x2
-    trans = [[p, 1.0 - p], [1.0 - p, p]]
-
-    for n in range(3, n_states + 1):
-        prev = trans
-        new_trans = [[0.0] * n for _ in range(n)]
-
-        for i in range(n):
-            for j in range(n):
-                # Four quadrant contributions
-                if i < n - 1 and j < n - 1:
-                    new_trans[i][j] += p * prev[i][j]
-                if i < n - 1 and j > 0:
-                    new_trans[i][j] += (1.0 - p) * prev[i][j - 1]
-                if i > 0 and j < n - 1:
-                    new_trans[i][j] += (1.0 - p) * prev[i - 1][j]
-                if i > 0 and j > 0:
-                    new_trans[i][j] += p * prev[i - 1][j - 1]
-
-        # Normalize interior rows (rows 1 through n-2) to sum to 1
-        for i in range(n):
-            row_sum = sum(new_trans[i])
-            if row_sum > 0.0:
-                new_trans[i] = [x / row_sum for x in new_trans[i]]
-
-        trans = new_trans
-
-    # Step 6: convert from log to level
-    grid_values = [math.exp(z) for z in log_grid]
-
-    return grid_values, trans
-
-
-def _stationary_distribution(
-    transition_matrix: list[list[float]],
-) -> list[float]:
-    """Compute stationary distribution of a Markov chain.
-
-    Uses power iteration: start from uniform, multiply by P^T repeatedly.
-
-    Args:
-        transition_matrix: Row-stochastic Markov transition matrix.
-
-    Returns:
-        Stationary distribution as a list of probabilities.
-    """
-    n = len(transition_matrix)
-    dist = [1.0 / n] * n
-
-    for _ in range(1000):
-        new_dist = [0.0] * n
-        for j in range(n):
-            for i in range(n):
-                new_dist[j] += dist[i] * transition_matrix[i][j]
-        # Check convergence
-        max_diff = max(abs(new_dist[k] - dist[k]) for k in range(n))
-        dist = new_dist
-        if max_diff < 1e-12:
-            break
-
-    # Normalize
-    total = sum(dist)
-    return [d / total for d in dist]
-
-
-def _draw_from_distribution(rng: SimulationRNG, probabilities: list[float]) -> int:
-    """Draw an index from a discrete probability distribution.
-
-    Args:
-        rng: Seeded RNG instance.
-        probabilities: Probability of each index.
-
-    Returns:
-        Drawn index.
-    """
-    u = rng.random()
-    cumulative = 0.0
-    for i, p in enumerate(probabilities):
-        cumulative += p
-        if u < cumulative:
-            return i
-    return len(probabilities) - 1
 
 
 # ============================================================================
@@ -384,7 +258,7 @@ def initialize_simulation_v2(
     )
 
     # Stationary distribution for initial productivity assignment
-    stationary_dist = _stationary_distribution(transition_matrix)
+    stationary_dist = stationary_distribution(transition_matrix)
 
     # Create households
     households = create_households(config, rng, productivity_grid, stationary_dist)
