@@ -162,10 +162,26 @@ def evaluate_enforcement_code(code: str, variables: dict[str, Any]) -> Any:
     safe_globals.update(_SAFE_MATH)
     safe_globals.update(variables)
 
+    # Try expression mode first (e.g., "income * rate")
     try:
         return eval(code, safe_globals)  # noqa: S307
+    except SyntaxError:
+        pass
     except Exception as exc:
         raise SandboxError(f"Enforcement code execution failed: {exc}") from exc
+
+    # Fall back to exec mode for assignments (e.g., "tax = income * rate")
+    local_ns: dict[str, Any] = {}
+    try:
+        exec(code, safe_globals, local_ns)  # noqa: S102
+    except Exception as exc:
+        raise SandboxError(f"Enforcement code execution failed: {exc}") from exc
+
+    # Return the first newly assigned variable, if any
+    if local_ns:
+        return next(iter(local_ns.values()))
+
+    return None
 
 
 # ---------------------------------------------------------------------------
