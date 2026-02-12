@@ -80,7 +80,7 @@ def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
 
-    log_level = logging.WARNING if args.quiet else logging.INFO
+    log_level = logging.ERROR if args.quiet else logging.INFO
     configure_logging(level=log_level)
 
     try:
@@ -213,7 +213,7 @@ def main_v2() -> None:
     parser = build_parser_v2()
     args = parser.parse_args()
 
-    log_level = logging.WARNING if args.quiet else logging.INFO
+    log_level = logging.ERROR if args.quiet else logging.INFO
     configure_logging(level=log_level)
 
     try:
