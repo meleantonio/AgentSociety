@@ -283,6 +283,143 @@ class NumericalSolver:
         """Interpolate policy function value at (a, z_idx)."""
         return self._linear_interp(a, policy, z_idx)
 
+    @staticmethod
+    def _is_homogeneous(households: list[HouseholdState]) -> bool:
+        """Check if all households share identical utility parameters.
+
+        Auto-detects homogeneity without needing the config flag.
+        """
+        if not households:
+            return True
+        ref = households[0].utility_params
+        return all(
+            h.utility_params.alpha == ref.alpha
+            and h.utility_params.beta == ref.beta
+            and h.utility_params.gamma == ref.gamma
+            and h.utility_params.beta_discount == ref.beta_discount
+            for h in households[1:]
+        )
+
+    def solve_vfi_shared(
+        self,
+        alpha: float,
+        beta_param: float,
+        gamma: float,
+        beta_discount: float,
+        wage: float,
+        interest_rate: float,
+        public_goods: float,
+        tax_function: Callable[[float], float],
+        transfer: float,
+    ) -> tuple[list[list[float]], list[list[float]]]:
+        """Solve VFI once for shared preferences, returning policy grids.
+
+        Identical to the VFI loop in solve_household but parameterized on
+        explicit utility weights instead of reading from an agent. Returns the
+        full (n_a x n_z) policy grids so callers can interpolate per agent.
+
+        Returns:
+            Tuple of (policy_c, policy_l) grids, each n_a x n_z.
+        """
+
+        def utility(c: float, lei: float, g: float) -> float:
+            c = max(c, 1e-10)
+            lei = max(lei, 1e-10)
+            g = max(g, 1e-10)
+            return (c**alpha) * (lei**beta_param) * (g**gamma)
+
+        leisure_grid = [i / self.n_leisure for i in range(self.n_leisure + 1)]
+
+        # Initialize value function
+        v_old = [[0.0] * self.n_z for _ in range(self.n_a)]
+        for ai in range(self.n_a):
+            for zi in range(self.n_z):
+                a = self.a_grid[ai]
+                z_i = self.productivity_grid[zi]
+                income = wage * z_i * 1.0
+                tax = tax_function(income)
+                budget = (1.0 + interest_rate) * a + income - tax + transfer
+                c = max(budget - self.a_min, 1e-10)
+                v_old[ai][zi] = utility(c, 0.5, max(public_goods, 1e-10))
+
+        v_new = [[0.0] * self.n_z for _ in range(self.n_a)]
+        policy_c = [[0.0] * self.n_z for _ in range(self.n_a)]
+        policy_l = [[0.0] * self.n_z for _ in range(self.n_a)]
+
+        for _vfi_iter in range(self.vfi_max_iter):
+            max_diff = 0.0
+
+            for ai in range(self.n_a):
+                a = self.a_grid[ai]
+                for zi in range(self.n_z):
+                    z_i = self.productivity_grid[zi]
+
+                    best_val = -1e30
+                    best_c = 0.0
+                    best_l = 0.5
+
+                    for lei in leisure_grid:
+                        labor = 1.0 - lei
+                        income = wage * z_i * labor
+                        tax = tax_function(income)
+                        budget = (1.0 + interest_rate) * a + income - tax + transfer
+
+                        max_c = max(0.0, budget - self.a_min)
+                        if max_c <= 0.0:
+                            c = 1e-10
+                            a_prime = self.a_min
+                        else:
+                            best_c_inner = 1e-10
+                            best_val_inner = -1e30
+                            for ci in range(11):
+                                c_try = max_c * ci / 10.0
+                                c_try = max(c_try, 1e-10)
+                                a_prime = budget - c_try
+                                a_prime = max(a_prime, self.a_min)
+
+                                u_now = utility(c_try, lei, public_goods)
+                                ev = self._interpolate_ev(a_prime, zi, v_old)
+
+                                val = u_now + beta_discount * ev
+                                if val > best_val_inner:
+                                    best_val_inner = val
+                                    best_c_inner = c_try
+
+                            c = best_c_inner
+                            val_total = best_val_inner
+
+                        if max_c <= 0.0:
+                            u_now = utility(c, lei, public_goods)
+                            ev = self._interpolate_ev(self.a_min, zi, v_old)
+                            val_total = u_now + beta_discount * ev
+
+                        if val_total > best_val:
+                            best_val = val_total
+                            best_c = c
+                            best_l = lei
+
+                    v_new[ai][zi] = best_val
+                    policy_c[ai][zi] = best_c
+                    policy_l[ai][zi] = best_l
+
+                    diff = abs(v_new[ai][zi] - v_old[ai][zi])
+                    if diff > max_diff:
+                        max_diff = diff
+
+            for ai in range(self.n_a):
+                for zi in range(self.n_z):
+                    v_old[ai][zi] = v_new[ai][zi]
+
+            if max_diff < self.vfi_tolerance:
+                log.debug(
+                    "vfi_shared.converged",
+                    iterations=_vfi_iter + 1,
+                    max_diff=max_diff,
+                )
+                break
+
+        return policy_c, policy_l
+
     def solve_all(
         self,
         households: list[HouseholdState],
@@ -293,7 +430,9 @@ class NumericalSolver:
     ) -> dict[str, EconomicDecision]:
         """Solve for all households using VFI.
 
-        Extracts tax function from constitutional tax rate (flat tax).
+        When all households share identical utility parameters (auto-detected),
+        VFI is solved once and policies are interpolated per agent (~Nx speedup).
+        Otherwise falls back to per-agent solve_household.
 
         Args:
             households: List of household states.
@@ -312,15 +451,43 @@ class NumericalSolver:
             return income * constitution_tax_rate
 
         decisions: dict[str, EconomicDecision] = {}
-        for h in households:
-            decision = self.solve_household(
-                agent=h,
+
+        if self._is_homogeneous(households) and households:
+            ref = households[0].utility_params
+            log.debug(
+                "solve_all.fast_path",
+                n_agents=len(households),
+                alpha=ref.alpha,
+                beta=ref.beta,
+                gamma=ref.gamma,
+            )
+            policy_c, policy_l = self.solve_vfi_shared(
+                alpha=ref.alpha,
+                beta_param=ref.beta,
+                gamma=ref.gamma,
+                beta_discount=ref.beta_discount,
                 wage=market.wage,
                 interest_rate=market.interest_rate,
                 public_goods=public_goods,
                 tax_function=tax_function,
                 transfer=transfer,
             )
-            decisions[h.id] = decision
+            for h in households:
+                consumption = self._interpolate_policy(h.wealth, h.productivity_index, policy_c)
+                leisure = self._interpolate_policy(h.wealth, h.productivity_index, policy_l)
+                consumption = max(consumption, 0.0)
+                leisure = max(0.0, min(1.0, leisure))
+                decisions[h.id] = EconomicDecision(consumption=consumption, leisure=leisure)
+        else:
+            for h in households:
+                decision = self.solve_household(
+                    agent=h,
+                    wage=market.wage,
+                    interest_rate=market.interest_rate,
+                    public_goods=public_goods,
+                    tax_function=tax_function,
+                    transfer=transfer,
+                )
+                decisions[h.id] = decision
 
         return decisions

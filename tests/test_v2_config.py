@@ -194,3 +194,57 @@ class TestSimulationConfigV2Serialization:
         assert config.num_z_states == 7
         assert config.use_llm is False
         assert config.solver_method == "vfi"
+
+
+class TestHomogeneousPreferencesConfig:
+    def test_defaults(self) -> None:
+        config = SimulationConfigV2()
+        assert config.homogeneous_preferences is True
+        assert config.utility_alpha == 0.4
+        assert config.utility_beta == 0.35
+        assert config.utility_gamma == 0.25
+        assert config.utility_beta_discount == 0.95
+
+    def test_weights_sum_validated(self) -> None:
+        """Weights that don't sum to 1.0 should raise when homogeneous=True."""
+        with pytest.raises(ValidationError):
+            SimulationConfigV2(
+                homogeneous_preferences=True,
+                utility_alpha=0.5,
+                utility_beta=0.5,
+                utility_gamma=0.5,
+            )
+
+    def test_weights_not_validated_when_heterogeneous(self) -> None:
+        """When homogeneous_preferences=False, utility weights are not enforced."""
+        config = SimulationConfigV2(
+            homogeneous_preferences=False,
+            utility_alpha=0.1,
+            utility_beta=0.1,
+            utility_gamma=0.1,
+        )
+        assert config.homogeneous_preferences is False
+
+    def test_custom_weights(self) -> None:
+        config = SimulationConfigV2(
+            utility_alpha=0.5,
+            utility_beta=0.3,
+            utility_gamma=0.2,
+            utility_beta_discount=0.98,
+        )
+        assert config.utility_alpha == 0.5
+        assert config.utility_beta == 0.3
+        assert config.utility_gamma == 0.2
+        assert config.utility_beta_discount == 0.98
+
+    def test_out_of_range_alpha(self) -> None:
+        with pytest.raises(ValidationError):
+            SimulationConfigV2(utility_alpha=0.0)
+        with pytest.raises(ValidationError):
+            SimulationConfigV2(utility_alpha=1.0)
+
+    def test_out_of_range_discount(self) -> None:
+        with pytest.raises(ValidationError):
+            SimulationConfigV2(utility_beta_discount=0.0)
+        with pytest.raises(ValidationError):
+            SimulationConfigV2(utility_beta_discount=1.0)

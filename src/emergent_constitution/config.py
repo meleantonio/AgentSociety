@@ -93,6 +93,23 @@ class SimulationConfigV2(BaseModel):
     initial_wealth_mean: float = Field(default=100.0, gt=0.0)
     initial_wealth_std: float = Field(default=30.0, ge=0.0)
 
+    # --- Household preferences ---
+    homogeneous_preferences: bool = Field(
+        default=True, description="All agents share utility params (fast VFI path)"
+    )
+    utility_alpha: float = Field(
+        default=0.4, gt=0.0, lt=1.0, description="Consumption weight (homogeneous)"
+    )
+    utility_beta: float = Field(
+        default=0.35, gt=0.0, lt=1.0, description="Leisure weight (homogeneous)"
+    )
+    utility_gamma: float = Field(
+        default=0.25, gt=0.0, lt=1.0, description="Public goods weight (homogeneous)"
+    )
+    utility_beta_discount: float = Field(
+        default=0.95, gt=0.0, lt=1.0, description="Discount factor (homogeneous)"
+    )
+
     # --- Intervals ---
     proposal_interval: int = Field(
         default=5, ge=1, description="Constitutional proposal every K periods"
@@ -141,4 +158,18 @@ class SimulationConfigV2(BaseModel):
         """If benchmark_mode is enabled, force use_llm to False."""
         if self.benchmark_mode and self.use_llm:
             object.__setattr__(self, "use_llm", False)
+        return self
+
+    @model_validator(mode="after")
+    def _validate_homogeneous_weights(self) -> SimulationConfigV2:
+        """When homogeneous_preferences is True, utility weights must sum to ~1.0."""
+        if self.homogeneous_preferences:
+            total = self.utility_alpha + self.utility_beta + self.utility_gamma
+            if abs(total - 1.0) > 1e-6:
+                msg = (
+                    f"Homogeneous utility weights must sum to 1.0, "
+                    f"got {total:.6f} (alpha={self.utility_alpha}, "
+                    f"beta={self.utility_beta}, gamma={self.utility_gamma})"
+                )
+                raise ValueError(msg)
         return self

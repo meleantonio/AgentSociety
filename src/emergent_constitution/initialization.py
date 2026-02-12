@@ -166,12 +166,20 @@ def create_households(
         prod_idx = _draw_from_distribution(rng, stationary_dist)
         productivity = productivity_grid[prod_idx]
 
-        # Utility params: alpha, beta, gamma ~ Dirichlet; beta_discount ~ U(0.9, 0.99)
-        alpha, beta, gamma = _generate_dirichlet3(rng)
-        beta_discount = rng.uniform(0.9, 0.99)
-        utility_params = UtilityParamsV2(
-            alpha=alpha, beta=beta, gamma=gamma, beta_discount=beta_discount
-        )
+        # Utility params: homogeneous from config or heterogeneous Dirichlet
+        if config.homogeneous_preferences:
+            utility_params = UtilityParamsV2(
+                alpha=config.utility_alpha,
+                beta=config.utility_beta,
+                gamma=config.utility_gamma,
+                beta_discount=config.utility_beta_discount,
+            )
+        else:
+            alpha, beta, gamma = _generate_dirichlet3(rng)
+            beta_discount = rng.uniform(0.9, 0.99)
+            utility_params = UtilityParamsV2(
+                alpha=alpha, beta=beta, gamma=gamma, beta_discount=beta_discount
+            )
 
         # Value vector: random split
         eq = rng.random()

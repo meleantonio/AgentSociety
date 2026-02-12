@@ -152,6 +152,28 @@ def build_parser_v2() -> argparse.ArgumentParser:
     parser.add_argument(
         "--benchmark", action="store_true", help="Numerical-only mode (no LLM calls)"
     )
+    parser.add_argument(
+        "--heterogeneous",
+        action="store_true",
+        help="Use heterogeneous preferences (slower, Dirichlet-drawn per agent)",
+    )
+
+    # Utility overrides (homogeneous mode)
+    parser.add_argument(
+        "--utility-alpha", type=float, default=0.4, help="Consumption weight (default: 0.4)"
+    )
+    parser.add_argument(
+        "--utility-beta", type=float, default=0.35, help="Leisure weight (default: 0.35)"
+    )
+    parser.add_argument(
+        "--utility-gamma", type=float, default=0.25, help="Public goods weight (default: 0.25)"
+    )
+    parser.add_argument(
+        "--utility-discount",
+        type=float,
+        default=0.95,
+        help="Discount factor (default: 0.95)",
+    )
 
     # LLM settings
     parser.add_argument("--llm-provider", type=str, default="anthropic", help="LLM provider")
@@ -199,6 +221,11 @@ def run_simulation_v2(args: argparse.Namespace) -> str:
         benchmark_mode=args.benchmark,
         llm_provider=args.llm_provider,
         llm_model=args.llm_model,
+        homogeneous_preferences=not args.heterogeneous,
+        utility_alpha=args.utility_alpha,
+        utility_beta=args.utility_beta,
+        utility_gamma=args.utility_gamma,
+        utility_beta_discount=args.utility_discount,
     )
     lead = LeadV2(config)
     output = lead.run()
