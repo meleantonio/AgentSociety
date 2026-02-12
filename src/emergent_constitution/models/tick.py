@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 from emergent_constitution.models.agent import AgentState
 from emergent_constitution.models.constitution import Constitution
-from emergent_constitution.models.proposal import Proposal, VoteOutcome
+from emergent_constitution.models.proposal import Proposal, TradeOffer, VoteOutcome
 
 
 class TickState(BaseModel):
@@ -18,6 +18,7 @@ class TickState(BaseModel):
         constitution: Active ruleset.
         proposals_this_tick: Proposals submitted this tick.
         votes: Vote outcomes this tick.
+        trades_this_tick: Bilateral trades executed this tick.
     """
 
     tick: int = Field(ge=0)
@@ -25,3 +26,4 @@ class TickState(BaseModel):
     constitution: Constitution
     proposals_this_tick: list[Proposal] = Field(default_factory=list)
     votes: list[VoteOutcome] = Field(default_factory=list)
+    trades_this_tick: list[TradeOffer] = Field(default_factory=list)
