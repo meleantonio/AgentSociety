@@ -1,297 +1,328 @@
 # Data Models Reference
 
-All data models are implemented using Pydantic for validation and serialization.
+All data models use Pydantic for validation and serialization. v2 models extend the simulation with DSGE-HA entities (households, firms, markets, shocks, decisions).
 
-## Core Models
+## v2 Core Models
 
-### AgentState
+### HouseholdState
 
-**Location**: `src/emergent_constitution/models/agent.py`
+**Location**: `src/emergent_constitution/models/household.py`
 
-Represents the complete state of a single citizen-agent at a point in time.
+Replaces v1 `AgentState` with full DSGE-HA household model.
 
 ```python
-class AgentState(BaseModel):
+class HouseholdState(BaseModel):
     id: str
-    wealth: float
-    productivity: float
-    utility_params: UtilityParams
-    value_vector: ValueVector
-    coalition_id: str | None
+    wealth: float                    # Assets a_t (>= 0)
+    productivity: float              # Idiosyncratic z_t from Markov chain
+    productivity_index: int          # Index into transition matrix
+    utility_params: UtilityParams    # Cobb-Douglas weights
+    value_vector: ValueVector        # Equality vs liberty
+    role: OccupationalRole           # worker/entrepreneur/researcher/unemployed
+    firm_id: str | None              # Firm owned (if entrepreneur)
+    coalition_id: str | None         # Coalition membership
+    # Per-period outcomes (filled after decisions applied)
+    consumption: float               # c_t for this period
+    leisure: float                   # l_t (0=full work, 1=no work)
+    labor_supply: float              # 1 - l_t
+    savings: float                   # a_{t+1} - a_t
+    income: float                    # w_t * z_t * labor_supply
+    taxes_paid: float
+    transfers_received: float
+    realized_utility: float          # u(c_t, l_t, G_t)
 ```
-
-**Fields**:
-
-| Field | Type | Constraints | Description |
-|-------|------|-------------|-------------|
-| `id` | str | Required | Unique agent identifier (e.g., "agent_001") |
-| `wealth` | float | ≥ 0.0 | Current wealth/consumption capacity |
-| `productivity` | float | > 0.0 | Production capacity per tick |
-| `utility_params` | UtilityParams | Required | Cobb-Douglas utility weights |
-| `value_vector` | ValueVector | Required | Ideological position (equality vs liberty) |
-| `coalition_id` | str \| None | Optional | ID of coalition this agent belongs to |
-
-**Invariants**:
-- Wealth must remain non-negative (enforced by economic engine)
-- Productivity must be positive
-- Utility params and value vector must sum to 1.0
 
 ### UtilityParams
 
-**Location**: `src/emergent_constitution/models/agent.py`
-
-Cobb-Douglas utility function weights: U = c^α × l^β × g^γ
+**Location**: `src/emergent_constitution/models/household.py`
 
 ```python
 class UtilityParams(BaseModel):
-    alpha: float  # Weight on private consumption
-    beta: float   # Weight on leisure
-    gamma: float  # Weight on public goods
+    alpha: float   # Weight on consumption (0-1)
+    beta: float    # Weight on leisure (0-1)
+    gamma: float   # Weight on public goods (0-1)
+    beta_discount: float = 0.95  # Intertemporal discount factor (0-1)
 ```
 
-**Fields**:
-
-| Field | Type | Constraints | Description |
-|-------|------|-------------|-------------|
-| `alpha` | float | 0.0 ≤ α ≤ 1.0 | Weight on private consumption |
-| `beta` | float | 0.0 ≤ β ≤ 1.0 | Weight on leisure (fixed at 1.0 in current implementation) |
-| `gamma` | float | 0.0 ≤ γ ≤ 1.0 | Weight on public goods |
-
-**Validation**: α + β + γ must equal 1.0 (within 1e-6 tolerance)
-
-**Example**:
-```python
-# Agent who values consumption and public goods equally, no leisure preference
-UtilityParams(alpha=0.5, beta=0.0, gamma=0.5)
-```
+Validation: `alpha + beta + gamma` must equal 1.0 (within 1e-6 tolerance).
 
 ### ValueVector
 
-**Location**: `src/emergent_constitution/models/agent.py`
-
-Agent's ideological position on the equality-liberty spectrum.
+**Location**: `src/emergent_constitution/models/household.py`
 
 ```python
 class ValueVector(BaseModel):
-    equality: float  # Preference weight toward equality
-    liberty: float   # Preference weight toward liberty
+    equality: float  # 0-1, preference toward egalitarian policies
+    liberty: float   # 0-1, preference toward libertarian policies
 ```
 
-**Fields**:
+Validation: `equality + liberty` must equal 1.0.
 
-| Field | Type | Constraints | Description |
-|-------|------|-------------|-------------|
-| `equality` | float | 0.0 ≤ e ≤ 1.0 | Weight favoring egalitarian policies (redistribution, communal property) |
-| `liberty` | float | 0.0 ≤ l ≤ 1.0 | Weight favoring libertarian policies (private property, low taxes) |
+### OccupationalRole
 
-**Validation**: equality + liberty must equal 1.0 (within 1e-6 tolerance)
-
-**Example**:
 ```python
-# Strongly egalitarian agent
-ValueVector(equality=0.9, liberty=0.1)
+class OccupationalRole(StrEnum):
+    WORKER = "worker"
+    ENTREPRENEUR = "entrepreneur"
+    RESEARCHER = "researcher"
+    UNEMPLOYED = "unemployed"
+```
 
-# Balanced agent
-ValueVector(equality=0.5, liberty=0.5)
+### FirmState
 
-# Strongly libertarian agent
-ValueVector(equality=0.1, liberty=0.9)
+**Location**: `src/emergent_constitution/models/firm.py`
+
+```python
+class FirmState(BaseModel):
+    id: str                          # e.g. "firm_0000"
+    owner_id: str                    # HouseholdState.id of entrepreneur
+    capital: float                   # K_f rented from savings (>= 0)
+    labor_demand: float              # L_f effective labor units (>= 0)
+    tfp: float                       # A_f firm-specific TFP (> 0)
+    worker_ids: list[str]            # Agents currently employed
+    rd_spend: float                  # R&D expenditure this period (>= 0)
+    output: float                    # Y_f = A_f * K_f^α * L_f^(1-α) (>= 0)
+    profit: float                    # π_f = Y_f - w*L_f - (r+δ)*K_f
+```
+
+### MarketState
+
+**Location**: `src/emergent_constitution/models/market.py`
+
+```python
+class MarketState(BaseModel):
+    wage: float                      # w_t labor market clearing price
+    interest_rate: float             # r_t capital market clearing price
+    aggregate_output: float          # Y_t total output
+    aggregate_consumption: float     # C_t total consumption
+    aggregate_investment: float      # I_t total investment
+    government_spending: float       # G_t public goods spending
+    market_clearing_error: float     # |excess demand| (PROP-003: < 1e-6)
+    labor_excess_demand: float
+    capital_excess_demand: float
+```
+
+### ShockState
+
+**Location**: `src/emergent_constitution/models/shocks.py`
+
+```python
+class ShockState(BaseModel):
+    productivity_grid: list[float]           # Rouwenhorst grid points
+    transition_matrix: list[list[float]]     # Markov transition probabilities
+    aggregate_tfp: float                     # Current A_t
+    preference_shocks: dict[str, float]      # Agent-specific preference perturbations
+```
+
+## Decision Models
+
+**Location**: `src/emergent_constitution/models/decisions.py`
+
+### EconomicDecision
+
+```python
+class EconomicDecision(BaseModel):
+    consumption: float  # c_t >= 0
+    leisure: float      # l_t in [0, 1]
+```
+
+### EntrepreneurialDecision
+
+```python
+class EntrepreneurialDecision(BaseModel):
+    create_firm: bool = False
+    capital_investment: float = 0.0   # K_f to rent (>= 0)
+    labor_demand: float = 0.0        # L_f to hire (>= 0)
+    rd_spend: float = 0.0            # R&D expenditure (>= 0)
+    close_firm: bool = False
+```
+
+### PoliticalDecision
+
+```python
+class PoliticalDecision(BaseModel):
+    proposal: ConstitutionalProposal | None = None
+    votes: dict[str, bool] = {}  # rule_name -> for/against
 ```
 
 ## Constitution Models
 
-### Constitution
+### ConstitutionV2
 
 **Location**: `src/emergent_constitution/models/constitution.py`
 
-The active ruleset governing the simulation. Mutable through voting.
+Extensible, structured constitutional document. Unlike v1's fixed 4 fields, v2 supports an open-ended collection of named rules.
 
 ```python
-class Constitution(BaseModel):
-    property_rule: PropertyRule
-    tax_rate: float
-    voting_rule: VotingRule
-    redistribution_rule: RedistributionRule
+class ConstitutionV2(BaseModel):
+    rules: dict[str, ConstitutionalRule]  # name -> rule
+    voting_rule: str = "majority_vote"    # Active voting procedure
 ```
 
-**Fields**:
+**Key methods**:
+- `get_tax_rules()` — Return all rules with `rule_type == TAX_SCHEDULE`
+- `get_transfer_rules()` — Return all transfer program rules
+- `get_active_voting_rule()` — Return the active voting procedure
 
-| Field | Type | Default | Constraints | Description |
-|-------|------|---------|-------------|-------------|
-| `property_rule` | PropertyRule | PRIVATE | Enum | How production output is allocated |
-| `tax_rate` | float | 0.0 | 0.0 ≤ t ≤ 1.0 | Fraction of output collected as tax |
-| `voting_rule` | VotingRule | MAJORITY | Enum | Threshold for proposals to pass |
-| `redistribution_rule` | RedistributionRule | FLAT | Enum | How tax revenue is redistributed |
-
-### PropertyRule (Enum)
-
-**Location**: `src/emergent_constitution/models/constitution.py`
+### ConstitutionalRule
 
 ```python
-class PropertyRule(StrEnum):
-    PRIVATE = "private"    # Each agent keeps their own productivity
-    COMMUNAL = "communal"  # Total productivity pooled and split equally
-    MIXED = "mixed"        # 50% private + 50% pooled
+class ConstitutionalRule(BaseModel):
+    name: str                            # Unique identifier (e.g. "income_tax")
+    rule_type: RuleType                  # Category
+    parameters: dict[str, Any] = {}      # Type-specific params (e.g. {"rate": 0.2})
+    description: str = ""                # Natural-language description
+    enforcement_code: str = ""           # Python expression for enforcement (AST-sandboxed)
+    version: int = 1                     # Incremented on modification
+    enacted_period: int = 0              # Period this rule was enacted
 ```
 
-### VotingRule (Enum)
-
-**Location**: `src/emergent_constitution/models/constitution.py`
+### RuleType
 
 ```python
-class VotingRule(StrEnum):
-    MAJORITY = "majority"            # >50% required
-    SUPERMAJORITY = "supermajority"  # ≥66.67% required
-    UNANIMITY = "unanimity"          # 100% required
+class RuleType(StrEnum):
+    TAX_SCHEDULE = "tax_schedule"
+    TRANSFER_PROGRAM = "transfer_program"
+    PUBLIC_GOODS = "public_goods"
+    MARKET_REGULATION = "market_regulation"
+    VOTING_PROCEDURE = "voting_procedure"
+    PROPERTY_RIGHTS = "property_rights"
+    FIRM_REGULATION = "firm_regulation"
+    CUSTOM = "custom"
 ```
 
-### RedistributionRule (Enum)
+### Default Constitution
 
-**Location**: `src/emergent_constitution/models/constitution.py`
+`create_default_constitution()` returns a ConstitutionV2 with 5 baseline rules:
 
-```python
-class RedistributionRule(StrEnum):
-    NONE = "none"              # Tax revenue discarded
-    FLAT = "flat"              # Equal distribution to all agents
-    PROGRESSIVE = "progressive" # More to below-median wealth agents
-```
+| Rule | Type | Parameters |
+|------|------|------------|
+| `flat_tax` | TAX_SCHEDULE | `{"rate": 0.0}` |
+| `flat_transfer` | TRANSFER_PROGRAM | `{"method": "equal_share"}` |
+| `public_goods_provision` | PUBLIC_GOODS | `{"fraction_of_revenue": 0.3}` |
+| `majority_vote` | VOTING_PROCEDURE | `{"threshold": 0.5}` |
+| `private_property` | PROPERTY_RIGHTS | `{"regime": "private"}` |
 
 ## Proposal and Voting Models
 
-### Proposal
+### ConstitutionalProposal (v2)
 
 **Location**: `src/emergent_constitution/models/proposal.py`
 
-A rule-change proposal submitted by a citizen.
-
 ```python
-class Proposal(BaseModel):
-    rule_key: str          # Constitution field to change
-    proposed_value: Any    # New value for the field
-    proposer_id: str       # Agent who proposed this
+class ConstitutionalProposal(BaseModel):
+    rule_name: str           # Rule to modify (or new rule name)
+    rule_type: RuleType      # Category
+    parameters: dict         # New parameters
+    description: str = ""    # Explanation
+    proposer_id: str = ""    # Agent who proposed
 ```
 
-**Valid rule_keys**: `property_rule`, `tax_rate`, `voting_rule`, `redistribution_rule`
-
-**Example**:
-```python
-# Proposal to increase tax rate to 20%
-Proposal(
-    rule_key="tax_rate",
-    proposed_value=0.2,
-    proposer_id="agent_042"
-)
-```
-
-### VoteOutcome
-
-**Location**: `src/emergent_constitution/models/proposal.py`
-
-Result of voting on a single proposal.
+### VoteOutcomeV2
 
 ```python
-class VoteOutcome(BaseModel):
-    proposal: Proposal
+class VoteOutcomeV2(BaseModel):
+    proposal: ConstitutionalProposal
     passed: bool
     votes_for: int
     votes_against: int
     total_eligible: int
 ```
 
-**Fields**:
-
-| Field | Type | Constraints | Description |
-|-------|------|-------------|-------------|
-| `proposal` | Proposal | Required | The proposal that was voted on |
-| `passed` | bool | Required | Whether the proposal was accepted |
-| `votes_for` | int | ≥ 0 | Number of yes votes |
-| `votes_against` | int | ≥ 0 | Number of no votes |
-| `total_eligible` | int | ≥ 0 | Total number of eligible voters |
-
-### TradeOffer
-
-**Location**: `src/emergent_constitution/models/proposal.py`
-
-A bilateral trade offer between two agents (wealth transfer).
-
-```python
-class TradeOffer(BaseModel):
-    seller_id: str    # Agent receiving wealth
-    buyer_id: str     # Agent paying wealth
-    amount: float     # Wealth transferred (must be positive)
-```
-
-**Validation**: Amount must be > 0.0 and buyer must have sufficient wealth.
-
-## State Models
-
-### TickState
-
-**Location**: `src/emergent_constitution/models/tick.py`
-
-Complete simulation state at a single tick.
-
-```python
-class TickState(BaseModel):
-    tick: int
-    agent_states: list[AgentState]
-    constitution: Constitution
-    proposals_this_tick: list[Proposal]
-    votes: list[VoteOutcome]
-    trades_this_tick: list[TradeOffer]
-```
-
-**Fields**:
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `tick` | int | Required | Current tick number (0-indexed) |
-| `agent_states` | list[AgentState] | Required | State of every agent |
-| `constitution` | Constitution | Required | Active ruleset |
-| `proposals_this_tick` | list[Proposal] | [] | Proposals submitted this tick |
-| `votes` | list[VoteOutcome] | [] | Vote outcomes this tick |
-| `trades_this_tick` | list[TradeOffer] | [] | Trades executed this tick |
-
 ## Output Models
 
-### HistoryEntry
+### HistoryEntryV2
 
 **Location**: `src/emergent_constitution/models/history.py`
-
-Aggregate statistics recorded at an observation tick.
 
 ```python
-class HistoryEntry(BaseModel):
-    tick: int
-    gini: float
-    total_output: float
+class HistoryEntryV2(BaseModel):
+    period: int
+    gini: float                              # Wealth Gini (0-1)
+    pareto_score: float                      # Pareto efficiency (0-1)
+    aggregate_output: float                  # Y_t
+    aggregate_consumption: float             # C_t
+    aggregate_investment: float              # I_t
     mean_wealth: float
     median_wealth: float
-    pareto_score: float
+    wealth_quantiles: list[float]            # [p10, p25, p50, p75, p90]
+    unemployment_rate: float
+    num_active_firms: int
+    mean_firm_size: float
+    aggregate_rd_spend: float
+    social_welfare: float                    # Sum of realized utilities
+    cumulative_welfare: float                # Discounted sum to date
+    wage: float                              # w_t
+    interest_rate: float                     # r_t
     rule_changes: list[str]
-    constitution_snapshot: Constitution
-    num_coalitions: int
+    constitution_snapshot: ConstitutionV2
 ```
 
-**Fields**:
+### WelfareSummary
 
-| Field | Type | Constraints | Description |
-|-------|------|-------------|-------------|
-| `tick` | int | ≥ 0 | Tick when this observation was taken |
-| `gini` | float | 0.0 ≤ g ≤ 1.0 | Gini coefficient (0=perfect equality, 1=perfect inequality) |
-| `total_output` | float | ≥ 0.0 | Total production output this tick |
-| `mean_wealth` | float | ≥ 0.0 | Mean agent wealth |
-| `median_wealth` | float | ≥ 0.0 | Median agent wealth |
-| `pareto_score` | float | 0.0 ≤ p ≤ 1.0 | Pareto efficiency estimate (1.0=fully efficient) |
-| `rule_changes` | list[str] | Default [] | Rule change descriptions this period |
-| `constitution_snapshot` | Constitution | Required | Constitution copy at this tick |
-| `num_coalitions` | int | ≥ 0 | Number of distinct coalitions |
+```python
+class WelfareSummary(BaseModel):
+    llm_total_welfare: float
+    benchmark_total_welfare: float | None = None
+    per_agent_comparison: dict[str, dict] | None = None
+```
 
-### SimulationOutput
+### SimulationOutputV2
 
-**Location**: `src/emergent_constitution/models/history.py`
+```python
+class SimulationOutputV2(BaseModel):
+    constitution: ConstitutionV2
+    history: list[HistoryEntryV2]
+    final_households: list[HouseholdState]
+    final_firms: list[FirmState]
+    welfare_summary: WelfareSummary
+    seed: int
+    total_periods: int
+```
 
-Final output of a complete simulation run.
+### PeriodState
+
+Internal state container used by LeadV2 during the simulation loop.
+
+```python
+class PeriodState(BaseModel):
+    period: int
+    households: list[HouseholdState]
+    firms: list[FirmState]
+    market: MarketState
+    shocks: ShockState
+    constitution: ConstitutionV2
+    proposals: list[ConstitutionalProposal]
+    votes: list[VoteOutcomeV2]
+```
+
+## v1 Models (Backward Compatible)
+
+### AgentState
+
+**Location**: `src/emergent_constitution/models/agent.py`
+
+```python
+class AgentState(BaseModel):
+    id: str
+    wealth: float            # >= 0.0
+    productivity: float      # > 0.0
+    utility_params: UtilityParams  # (v1 version without beta_discount)
+    value_vector: ValueVector
+    coalition_id: str | None
+```
+
+### Constitution (v1)
+
+```python
+class Constitution(BaseModel):
+    property_rule: PropertyRule = PropertyRule.PRIVATE
+    tax_rate: float = 0.0           # 0-1
+    voting_rule: VotingRule = VotingRule.MAJORITY
+    redistribution_rule: RedistributionRule = RedistributionRule.FLAT
+```
+
+### SimulationOutput (v1)
 
 ```python
 class SimulationOutput(BaseModel):
@@ -302,104 +333,29 @@ class SimulationOutput(BaseModel):
     total_ticks: int
 ```
 
-**Fields**:
+## Serialization
 
-| Field | Type | Constraints | Description |
-|-------|------|-------------|-------------|
-| `constitution` | Constitution | Required | Final constitution after all ticks |
-| `history` | list[HistoryEntry] | Required | All observation entries |
-| `final_agent_states` | list[AgentState] | Required | Agent states at last tick |
-| `seed` | int | Required | RNG seed used for this run (for reproducibility) |
-| `total_ticks` | int | ≥ 0 | Number of ticks executed |
+All models support JSON serialization via Pydantic:
 
-**Serialization**:
 ```python
-# Convert to JSON
+# Serialize
 json_str = output.model_dump_json(indent=2)
 
-# Convert from JSON
-output = SimulationOutput.model_validate_json(json_str)
-```
+# Deserialize
+output = SimulationOutputV2.model_validate_json(json_str)
 
-## Configuration Models
-
-### SimulationConfig
-
-**Location**: `src/emergent_constitution/config.py`
-
-Top-level configuration for a simulation run.
-
-```python
-class SimulationConfig(BaseModel):
-    num_agents: int
-    max_ticks: int
-    seed: int
-    initial_wealth_mean: float
-    initial_wealth_std: float
-    initial_productivity_mean: float
-    initial_productivity_std: float
-    proposal_interval: int
-    observer_interval: int
-    trade_interval: int
-    coalition_interval: int
-    use_llm: bool
-    llm_fraction: float
-```
-
-See [Configuration Reference](configuration.md) for complete details.
-
-## Coalition Models
-
-### CoalitionInfo
-
-**Location**: `src/emergent_constitution/coalition.py`
-
-Information about a single coalition.
-
-```python
-class CoalitionInfo(BaseModel):
-    id: str              # Coalition identifier
-    member_ids: list[str]  # Agent IDs in this coalition
-    mean_equality: float   # Mean equality value of members
-    mean_liberty: float    # Mean liberty value of members
-```
-
-## Validation and Constraints
-
-### Pydantic Features Used
-
-1. **Field Constraints**: `ge`, `gt`, `le`, `lt` for numeric bounds
-2. **Model Validators**: Custom validation logic (e.g., weights sum to 1.0)
-3. **Type Coercion**: Automatic conversion when safe
-4. **Serialization**: JSON export/import with `model_dump_json()` / `model_validate_json()`
-5. **Deep Copying**: `model_copy(deep=True)` for immutable state management
-
-### Custom Validators
-
-**UtilityParams and ValueVector**: Both enforce that their weights sum to 1.0 within 1e-6 tolerance using `@model_validator(mode="after")`.
-
-**Constitution**: Field values are constrained by enum types and numeric bounds.
-
-**Proposal**: Validated against `CONSTITUTION_FIELDS` dictionary to ensure rule_key exists and proposed_value is compatible.
-
-## Type Annotations
-
-All models use modern Python type hints (requires Python 3.10+):
-
-- `str | None` instead of `Optional[str]`
-- `list[AgentState]` instead of `List[AgentState]`
-- `dict[str, float]` instead of `Dict[str, float]`
-
-## Immutability Pattern
-
-Models are designed for functional-style updates:
-
-```python
-# Create new state with updated wealth
-new_agent = agent.model_copy(update={"wealth": agent.wealth + 10.0})
-
-# Deep copy for nested structures
+# Deep copy for immutability
+new_household = household.model_copy(update={"wealth": new_wealth})
 new_constitution = constitution.model_copy(deep=True)
 ```
 
-This ensures state immutability within each tick, supporting determinism and testability.
+## Validation Summary
+
+| Model | Validators |
+|-------|-----------|
+| UtilityParams | `alpha + beta + gamma == 1.0` |
+| ValueVector | `equality + liberty == 1.0` |
+| HouseholdState | `wealth >= 0`, `productivity > 0`, `0 <= leisure <= 1` |
+| FirmState | `capital >= 0`, `labor_demand >= 0`, `tfp > 0` |
+| SimulationConfigV2 | `benchmark_mode => use_llm=False`, all numeric bounds |
+| ConstitutionalRule | AST validation of `enforcement_code` |

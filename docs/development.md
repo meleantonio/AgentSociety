@@ -7,6 +7,7 @@
 - Python 3.10 or higher
 - Rye (recommended) or pip
 - Git
+- Anthropic API key (for LLM mode; not needed for benchmark/testing)
 
 ### Setup
 
@@ -39,45 +40,57 @@ Activate the virtual environment:
 source .venv/bin/activate
 ```
 
+### Verify Installation
+
+```bash
+# Run tests
+pytest
+
+# Run a quick benchmark simulation (no API key needed)
+emergent-constitution-v2 --benchmark -n 20 -t 10 -q
+```
+
 ## Project Structure
 
 ```
 AgentSociety/
 ├── src/emergent_constitution/     # Main package
 │   ├── models/                    # Pydantic data models
-│   ├── __init__.py                # Public API exports
-│   ├── __main__.py                # CLI entry point
-│   ├── config.py                  # Configuration
-│   ├── lead.py                    # Main simulation loop
-│   ├── citizen.py                 # Agent decision logic
-│   ├── voting.py                  # Voting mechanics
-│   ├── economics.py               # Economic engine
-│   ├── observer.py                # Statistics computation
-│   ├── coalition.py               # Coalition formation
-│   ├── reporter.py                # Report generation
-│   ├── initialization.py          # State initialization
-│   ├── rng.py                     # Seeded RNG wrapper
-│   └── logging.py                 # Logging configuration
-├── tests/                         # Test suite (186 tests)
-│   ├── test_agent.py
-│   ├── test_citizen.py
-│   ├── test_coalition.py
-│   ├── test_config.py
-│   ├── test_constitution.py
-│   ├── test_economics.py
-│   ├── test_history.py
-│   ├── test_initialization.py
-│   ├── test_integration.py
-│   ├── test_lead.py
-│   ├── test_llm_citizen.py
-│   ├── test_observer.py
-│   ├── test_proposal.py
-│   ├── test_reporter.py
-│   ├── test_rng.py
-│   ├── test_tick.py
-│   └── test_voting.py
+│   │   ├── agent.py               #   v1 AgentState
+│   │   ├── household.py           #   v2 HouseholdState
+│   │   ├── firm.py                #   v2 FirmState
+│   │   ├── market.py              #   v2 MarketState
+│   │   ├── shocks.py              #   v2 ShockState
+│   │   ├── decisions.py           #   v2 EconomicDecision, EntrepreneurialDecision, PoliticalDecision
+│   │   ├── constitution.py        #   v1 Constitution + v2 ConstitutionV2
+│   │   ├── proposal.py            #   v1 Proposal + v2 ConstitutionalProposal
+│   │   ├── tick.py                #   v1 TickState
+│   │   └── history.py             #   v1 + v2 HistoryEntry, SimulationOutput
+│   ├── __init__.py                # Public API exports (v1)
+│   ├── __main__.py                # CLI entry points (v1 + v2)
+│   ├── config.py                  # SimulationConfig (v1) + SimulationConfigV2
+│   ├── lead.py                    # Lead (v1) + LeadV2 (9-step lifecycle)
+│   ├── citizen.py                 # Rule-based agent decision logic (v1)
+│   ├── llm_citizen.py             # LLM citizen interface (v1)
+│   ├── llm_engine.py              # LLM decision engine (v2): batching, caching, fallback
+│   ├── llm_providers.py           # LLM provider abstraction: Anthropic, Mock
+│   ├── numerical_solver.py        # VFI benchmark solver (v2)
+│   ├── constitution_engine.py     # Rule enforcement with AST sandbox (v2)
+│   ├── market_clearing.py         # Tatonnement market clearing (v2)
+│   ├── shock_generators.py        # Rouwenhorst discretization + shock drawing (v2)
+│   ├── economics.py               # Production, budget, utility (v1 + v2)
+│   ├── voting.py                  # Proposal validation and tallying (v1 + v2)
+│   ├── coalition.py               # Coalition formation (v1 + v2)
+│   ├── initialization.py          # State initialization (v1 + v2)
+│   ├── observer.py                # Statistics (v1) + ObserverV2 (20+ stats)
+│   ├── reporter.py                # Report generation (v1 + v2)
+│   ├── rng.py                     # Seeded RNG wrapper (PROP-001)
+│   └── logging.py                 # structlog configuration
+├── tests/                         # 35 test modules, 892 tests
 ├── docs/                          # Documentation
-├── AgentSocietyPlanning/          # Original specification
+├── AgentSocietyPlanning/          # Specification documents
+│   ├── spec/                      #   requirements, design, tasks
+│   └── steering/                  #   coding standards
 ├── pyproject.toml                 # Project metadata
 └── CLAUDE.md                      # Claude Code guidance
 ```
@@ -96,18 +109,31 @@ pytest
 pytest --cov=emergent_constitution --cov-report=term-missing
 ```
 
-Current coverage: **96%**
-
-### Specific Test Files
+### v2-Specific Tests
 
 ```bash
-pytest tests/test_lead.py
-pytest tests/test_economics.py -v
+# v2 lead lifecycle
+pytest tests/test_lead_v2.py -v
+
+# v2 data models
+pytest tests/test_v2_models.py -v
+
+# v2 config
+pytest tests/test_v2_config.py -v
+
+# Property-based invariant tests (PROP-001 through PROP-006)
+pytest tests/test_properties.py -v
+
+# Market clearing
+pytest tests/test_market_clearing.py -v
+
+# LLM engine and providers
+pytest tests/test_llm_engine.py tests/test_llm_providers.py -v
 ```
 
 ### Excluding Slow Tests
 
-Some integration tests are marked as slow:
+Some integration and scale tests are marked as slow:
 
 ```bash
 pytest -m "not slow"
@@ -116,14 +142,7 @@ pytest -m "not slow"
 ### Running a Single Test
 
 ```bash
-pytest tests/test_voting.py::test_tally_votes_majority
-```
-
-### Verbose Output
-
-```bash
-pytest -v
-pytest -vv  # Extra verbose
+pytest tests/test_voting_v2.py::TestTallyVotesV2::test_majority_passes -v
 ```
 
 ### Test Debugging
@@ -143,30 +162,15 @@ pytest -s
 
 ### Formatting with Ruff
 
-Format all code:
-
 ```bash
 ruff format .
 ```
 
-Check what would change without modifying:
-
-```bash
-ruff format --check .
-```
-
 ### Linting with Ruff
-
-Run all linters:
 
 ```bash
 ruff check .
-```
-
-Auto-fix issues where possible:
-
-```bash
-ruff check --fix .
+ruff check --fix .  # Auto-fix where possible
 ```
 
 ### Configuration
@@ -201,39 +205,41 @@ pytest
 ### General Principles
 
 1. **Explicit over implicit**: Use clear names, avoid magic
-2. **Immutability**: Functions should not mutate inputs
-3. **Type hints**: All functions must have type annotations
+2. **Immutability**: Functions should not mutate inputs — return new objects via `model_copy(update={...})`
+3. **Type hints**: All functions must have type annotations (Python 3.10+ syntax)
 4. **Docstrings**: All public functions/classes must have Google-style docstrings
 5. **Validation**: Use Pydantic for all data models
-6. **Logging**: Use structlog with context
-7. **Determinism**: All randomness through `SimulationRNG`
+6. **Logging**: Use structlog with context variables
+7. **Determinism**: All randomness through `SimulationRNG` (PROP-001)
+8. **Sandboxing**: Constitution enforcement code runs in AST sandbox (PROP-006)
 
 ### Docstring Format
 
 Use Google-style docstrings:
 
 ```python
-def compute_gini(agents: list[AgentState]) -> float:
-    """Compute the Gini coefficient of wealth distribution.
+def compute_budget(
+    agent: HouseholdState,
+    wage: float,
+    interest_rate: float,
+    tax: float,
+    transfer: float,
+) -> float:
+    """Compute the household budget constraint.
 
-    The Gini coefficient measures inequality on a scale from 0 (perfect
-    equality) to 1 (perfect inequality). Computed using the standard
-    formula based on sorted wealth values.
+    Budget = (1+r)*a + w*z*(1-l) - tax + transfer
 
     Args:
-        agents: List of agent states.
+        agent: Household state with wealth and productivity.
+        wage: Market clearing wage w_t.
+        interest_rate: Market clearing rate r_t.
+        tax: Taxes owed this period.
+        transfer: Transfers received this period.
 
     Returns:
-        Gini coefficient in [0, 1].
+        Available budget for consumption and savings.
 
-    Raises:
-        ValueError: If agents list is empty.
-
-    Example:
-        >>> agents = [AgentState(..., wealth=100), AgentState(..., wealth=200)]
-        >>> gini = compute_gini(agents)
-        >>> 0.0 <= gini <= 1.0
-        True
+    Traceability: REQ-004, PROP-002
     """
 ```
 
@@ -243,19 +249,15 @@ Use modern Python 3.10+ syntax:
 
 ```python
 # Correct
-def process_agents(agents: list[AgentState]) -> dict[str, float]:
+def process(households: list[HouseholdState]) -> dict[str, EconomicDecision]:
     ...
 
-def get_coalition(agent_id: str) -> CoalitionInfo | None:
+def get_firm(firm_id: str) -> FirmState | None:
     ...
 
 # Incorrect (old syntax)
 from typing import List, Dict, Optional
-
-def process_agents(agents: List[AgentState]) -> Dict[str, float]:
-    ...
-
-def get_coalition(agent_id: str) -> Optional[CoalitionInfo]:
+def process(households: List[HouseholdState]) -> Dict[str, EconomicDecision]:
     ...
 ```
 
@@ -264,20 +266,18 @@ def get_coalition(agent_id: str) -> Optional[CoalitionInfo]:
 Never mutate function arguments:
 
 ```python
-# Correct
-def economic_step(agents: list[AgentState], constitution: Constitution) -> list[AgentState]:
-    """Apply economic step and return NEW agent states."""
-    new_agents = []
-    for agent in agents:
-        new_agent = agent.model_copy(update={"wealth": compute_new_wealth(agent)})
-        new_agents.append(new_agent)
-    return new_agents
+# Correct — return new objects
+def update_wealth(households: list[HouseholdState], income: dict[str, float]) -> list[HouseholdState]:
+    return [
+        h.model_copy(update={"wealth": h.wealth + income.get(h.id, 0.0)})
+        for h in households
+    ]
 
-# Incorrect (mutates input)
-def economic_step(agents: list[AgentState], constitution: Constitution) -> list[AgentState]:
-    for agent in agents:
-        agent.wealth = compute_new_wealth(agent)  # Mutates input!
-    return agents
+# Incorrect — mutates input
+def update_wealth(households: list[HouseholdState], income: dict[str, float]) -> list[HouseholdState]:
+    for h in households:
+        h.wealth += income.get(h.id, 0.0)  # Mutates input!
+    return households
 ```
 
 ### Error Handling
@@ -289,172 +289,112 @@ import structlog
 
 log = structlog.get_logger()
 
-def validate_proposal(proposal: Proposal) -> bool:
-    """Validate a proposal against constitution schema.
+def enforce_taxes(households: list[HouseholdState], constitution: ConstitutionV2) -> tuple[list[HouseholdState], float]:
+    tax_rules = constitution.get_tax_rules()
+    if not tax_rules:
+        log.debug("enforce_taxes.no_rules")
+        return households, 0.0
 
-    Args:
-        proposal: Proposal to validate.
-
-    Returns:
-        True if valid, False otherwise.
-    """
-    if proposal.rule_key not in CONSTITUTION_FIELDS:
-        log.warning(
-            "proposal.invalid_rule_key",
-            rule_key=proposal.rule_key,
-            proposer=proposal.proposer_id,
-        )
-        return False
-
-    # ... more validation ...
-    return True
-```
-
-Never silently ignore exceptions:
-
-```python
-# Correct
-try:
-    result = compute_utility(agent, wealth, public_goods)
-except (ValueError, OverflowError) as exc:
-    log.error("utility.computation_failed", agent_id=agent.id, error=str(exc))
-    return 0.0
-
-# Incorrect
-try:
-    result = compute_utility(agent, wealth, public_goods)
-except:  # Too broad, no logging
-    pass
+    try:
+        # ... enforcement logic ...
+    except ConstitutionEngineError as exc:
+        log.error("enforce_taxes.failed", error=str(exc))
+        return households, 0.0  # Safe fallback
 ```
 
 ## Adding New Features
 
-### 1. Adding a New Constitution Rule
+### 1. Adding a New Constitutional Rule Type
 
-Example: Add a "wealth_cap" rule.
+v2 uses extensible rules. To add a new rule category:
 
-**Step 1**: Define the rule in `models/constitution.py`:
+**Step 1**: Add to `RuleType` enum in `models/constitution.py`:
 
 ```python
-class Constitution(BaseModel):
+class RuleType(StrEnum):
+    # ... existing ...
+    ENVIRONMENTAL = "environmental"  # New rule type
+```
+
+**Step 2**: Add enforcement in `constitution_engine.py`:
+
+```python
+def enforce_environmental(
+    self, firms: list[FirmState], constitution: ConstitutionV2
+) -> list[FirmState]:
+    env_rules = [r for r in constitution.rules.values() if r.rule_type == RuleType.ENVIRONMENTAL]
+    # ... enforcement logic ...
+```
+
+**Step 3**: Wire into LeadV2 step 6 in `lead.py`:
+
+```python
+def _enforce_constitution(self, ...):
+    # ... existing enforcement ...
+    firms = self.constitution_engine.enforce_environmental(firms, constitution)
+```
+
+**Step 4**: Add tests in a new `tests/test_environmental_rules.py`.
+
+### 2. Adding a New Statistic to ObserverV2
+
+**Step 1**: Add field to `HistoryEntryV2` in `models/history.py`:
+
+```python
+class HistoryEntryV2(BaseModel):
     # ... existing fields ...
-    wealth_cap: float | None = Field(default=None, ge=0.0)
-
-# Update the schema registry
-CONSTITUTION_FIELDS["wealth_cap"] = float
+    income_mobility: float = 0.0  # New statistic
 ```
 
-**Step 2**: Implement enforcement in `economics.py`:
+**Step 2**: Compute in `observer.py` `ObserverV2.observe()`:
 
 ```python
-def apply_wealth_cap(agents: list[AgentState], constitution: Constitution) -> list[AgentState]:
-    """Cap agent wealth at constitutional limit if set."""
-    if constitution.wealth_cap is None:
-        return agents
-
-    return [
-        agent.model_copy(update={"wealth": min(agent.wealth, constitution.wealth_cap)})
-        for agent in agents
-    ]
-```
-
-**Step 3**: Add proposal logic in `citizen.py`:
-
-```python
-def decide_proposal(agent: AgentState, constitution: Constitution, rng: SimulationRNG) -> Proposal | None:
-    # ... existing logic ...
-
-    # Egalitarian agents propose wealth caps
-    if agent.value_vector.equality > 0.7 and rng.random() < 0.1:
-        return Proposal(
-            rule_key="wealth_cap",
-            proposed_value=200.0,
-            proposer_id=agent.id,
-        )
-```
-
-**Step 4**: Add tests:
-
-```python
-def test_wealth_cap_enforcement():
-    agents = [AgentState(id="a1", wealth=300.0, ...)]
-    constitution = Constitution(wealth_cap=200.0)
-    capped = apply_wealth_cap(agents, constitution)
-    assert capped[0].wealth == 200.0
-```
-
-### 2. Adding a New Statistic
-
-Example: Track median productivity.
-
-**Step 1**: Add field to `HistoryEntry` in `models/history.py`:
-
-```python
-class HistoryEntry(BaseModel):
-    # ... existing fields ...
-    median_productivity: float = Field(ge=0.0)
-```
-
-**Step 2**: Compute in `observer.py`:
-
-```python
-def observe_tick(...) -> HistoryEntry:
+def observe(self, period_state: PeriodState, ...) -> HistoryEntryV2:
     # ... existing computations ...
-    median_prod = statistics.median(a.productivity for a in agents)
+    mobility = self._compute_income_mobility(period_state.households)
 
-    return HistoryEntry(
+    entry = HistoryEntryV2(
         # ... existing fields ...
-        median_productivity=median_prod,
+        income_mobility=mobility,
     )
 ```
 
-**Step 3**: Display in `reporter.py`:
+**Step 3**: Display in `reporter.py` `_format_statistics_evolution_v2()`.
+
+**Step 4**: Add test in `tests/test_observer_v2.py`.
+
+### 3. Adding a New LLM Provider
+
+**Step 1**: Implement the `LLMProvider` protocol in `llm_providers.py`:
 
 ```python
-def generate_report(output: SimulationOutput) -> str:
-    # ... existing report sections ...
-    lines.append(f"Median Productivity: {entry.median_productivity:.2f}")
+class OpenAIProvider:
+    """OpenAI-compatible LLM provider."""
+
+    def __init__(self, config: SimulationConfig) -> None:
+        self.model = getattr(config, "llm_model", "gpt-4")
+
+    def generate(self, messages: list[dict[str, str]], schema: type[BaseModel]) -> str:
+        # ... OpenAI API call ...
+        return json_response
+
+    def generate_batch(self, batch: list[list[dict[str, str]]], schema: type[BaseModel]) -> list[str]:
+        return [self.generate(msgs, schema) for msgs in batch]
 ```
 
-**Step 4**: Add tests:
+**Step 2**: Register in `create_provider()`:
 
 ```python
-def test_observe_tick_computes_median_productivity():
-    agents = [AgentState(id=f"a{i}", productivity=float(i*10), ...) for i in range(5)]
-    entry = observe_tick(...)
-    assert entry.median_productivity == 20.0
+def create_provider(config, rng) -> LLMProvider:
+    if config.llm_provider == "openai":
+        return OpenAIProvider(config)
+    elif config.llm_provider == "anthropic":
+        return AnthropicProvider(config)
+    else:
+        return MockProvider(rng, config)
 ```
 
-### 3. Adding a Custom Citizen Strategy
-
-Example: Implement LLM-based reasoning.
-
-**Step 1**: Implement the `CitizenLLM` protocol from `llm_citizen.py`:
-
-```python
-from emergent_constitution.llm_citizen import CitizenLLM, PromptBuilder
-
-class MyCitizenLLM(CitizenLLM):
-    def propose_rule_change(self, context: str) -> Proposal | None:
-        # Call your LLM API with context
-        response = my_llm_api.generate(context)
-        return parse_proposal(response)
-
-    def vote_on_proposal(self, context: str) -> bool:
-        response = my_llm_api.generate(context)
-        return "yes" in response.lower()
-```
-
-**Step 2**: Use it in the simulation:
-
-```python
-from emergent_constitution import Lead, SimulationConfig
-
-config = SimulationConfig(use_llm=True, llm_fraction=0.2)
-llm = MyCitizenLLM()
-lead = Lead(config, citizen_llm=llm)
-output = lead.run()
-```
+**Step 3**: Add tests using MockProvider pattern.
 
 ## Testing Guidelines
 
@@ -462,69 +402,76 @@ output = lead.run()
 
 - **Unit tests**: Test individual functions in isolation
 - **Integration tests**: Test component interactions (mark with `@pytest.mark.slow`)
-- **Property tests**: Test invariants (e.g., wealth conservation)
+- **Property tests**: Test formal invariants (PROP-001 through PROP-006 in `test_properties.py`)
+- **Scale tests**: Test performance with large N (in `test_scale.py`)
 
-### Fixtures
+### Property Invariants to Maintain
 
-Use pytest fixtures for common test data:
+When modifying economics, market clearing, or state management code, verify these properties still hold:
+
+| Property | What to test |
+|----------|-------------|
+| PROP-001 | Same seed + config produces identical output |
+| PROP-002 | All household wealth >= `a_min` after every step |
+| PROP-003 | Market clearing error < `tatonnement_tolerance` |
+| PROP-004 | No NaN/Inf in wealth, consumption, or output |
+| PROP-005 | Social welfare is finite and non-negative |
+| PROP-006 | All constitutional rules pass AST validation |
+
+### v2 Test Fixtures
+
+Common fixtures are in `tests/conftest.py`. Key ones:
 
 ```python
-import pytest
+@pytest.fixture
+def v2_config() -> SimulationConfigV2:
+    return SimulationConfigV2(num_agents=20, max_periods=10, seed=42, benchmark_mode=True)
 
 @pytest.fixture
-def sample_agents() -> list[AgentState]:
-    """Create a standard set of test agents."""
-    return [
-        AgentState(
-            id=f"agent_{i:03d}",
-            wealth=100.0,
-            productivity=10.0,
-            utility_params=UtilityParams(alpha=0.5, beta=0.3, gamma=0.2),
-            value_vector=ValueVector(equality=0.5, liberty=0.5),
-        )
-        for i in range(5)
-    ]
-
-def test_something(sample_agents):
-    result = my_function(sample_agents)
-    assert result > 0
+def sample_households(v2_config) -> list[HouseholdState]:
+    period_state, _ = initialize_simulation_v2(v2_config)
+    return period_state.households
 ```
 
-### Parametrized Tests
+### Testing LLM Integration
 
-Use `@pytest.mark.parametrize` for multiple test cases:
+Always use `MockProvider` for unit tests — never make real API calls:
 
 ```python
-@pytest.mark.parametrize(
-    "votes_for,votes_against,rule,expected",
-    [
-        (6, 4, VotingRule.MAJORITY, True),       # 60% > 50%
-        (5, 5, VotingRule.MAJORITY, False),      # 50% not > 50%
-        (7, 3, VotingRule.SUPERMAJORITY, True),  # 70% >= 66.67%
-        (6, 4, VotingRule.SUPERMAJORITY, False), # 60% < 66.67%
-    ],
-)
-def test_vote_threshold(votes_for, votes_against, rule, expected):
-    # ... test logic ...
+def test_llm_engine_economic_decisions():
+    config = SimulationConfigV2(num_agents=20, benchmark_mode=False, llm_provider="mock")
+    rng = SimulationRNG(42)
+    engine = LLMDecisionEngine(config=config, rng=rng)
+    decisions = engine.collect_economic_decisions(households, market, constitution)
+    assert len(decisions) == len(households)
 ```
 
 ### Determinism Tests
 
-Always test determinism for randomized functions:
+Always test determinism for any function that uses RNG:
 
 ```python
-def test_initialization_deterministic():
-    config = SimulationConfig(seed=42, num_agents=10)
-    state1, rng1 = initialize_simulation(config)
-    state2, rng2 = initialize_simulation(config)
-
-    assert state1.agent_states[0].wealth == state2.agent_states[0].wealth
-    assert state1.agent_states[0].productivity == state2.agent_states[0].productivity
+def test_initialization_v2_deterministic():
+    config = SimulationConfigV2(num_agents=20, seed=42, benchmark_mode=True)
+    state1, _ = initialize_simulation_v2(config)
+    state2, _ = initialize_simulation_v2(config)
+    assert state1.households[0].wealth == state2.households[0].wealth
+    assert state1.shocks.productivity_grid == state2.shocks.productivity_grid
 ```
 
-## Debugging
+## Development Workflow
 
-### Logging
+### Cost-Conscious Development
+
+| Task | Recommended mode | Cost |
+|------|-----------------|------|
+| Writing tests | `MockProvider` | $0 |
+| Debugging logic | `benchmark_mode=True` | $0 |
+| Testing LLM integration | Haiku, 5 agents, 5 periods | ~$0.02 |
+| Validation runs | Haiku, 20 agents, 50 periods | ~$3 |
+| Full simulation | Sonnet, 50 agents, 100 periods | ~$56 |
+
+### Debugging
 
 Enable detailed logging:
 
@@ -535,60 +482,34 @@ from emergent_constitution.logging import configure_logging
 configure_logging(level=logging.DEBUG)
 ```
 
-View structured logs:
-
-```python
-import structlog
-
-log = structlog.get_logger()
-
-log.info("simulation.tick", tick=42, num_proposals=3, gini=0.35)
-# Output: simulation.tick tick=42 num_proposals=3 gini=0.35
-```
-
-### Debugging Tests
-
-```bash
-# Run test with print statements visible
-pytest tests/test_lead.py::test_run_simulation -s
-
-# Drop into pdb on failure
-pytest tests/test_lead.py::test_run_simulation --pdb
-
-# Set breakpoint in code
-import pdb; pdb.set_trace()
-```
-
-### Profiling
-
-Profile slow tests:
-
-```bash
-python -m cProfile -o profile.stats -m pytest tests/test_integration.py
-python -m pstats profile.stats
-# (Pstats) sort cumulative
-# (Pstats) stats 10
-```
+Structured log events to look for:
+- `simulation_v2.initialized` — config summary
+- `step2.markets_cleared` — wage, interest_rate, clearing_error
+- `step3.decisions_collected` — counts
+- `step7.governance_processed` — proposals, passed count
+- `step8.states_updated` — total consumption, total wealth
 
 ## Git Workflow
 
 ### Branch Naming
 
-- `feat/description` - New features
-- `fix/description` - Bug fixes
-- `refactor/description` - Code refactoring
-- `docs/description` - Documentation updates
-- `test/description` - Test additions/fixes
+- `feat/description` — New features
+- `fix/description` — Bug fixes
+- `refactor/description` — Code refactoring
+- `docs/description` — Documentation updates
+- `test/description` — Test additions/fixes
 
 ### Commit Messages
 
 Use Conventional Commits format:
 
 ```
-feat: add wealth_cap constitution rule
+feat: add environmental regulation rule type
 
-Allows egalitarian agents to propose maximum wealth limits.
-Enforced in economics.py after taxation step.
+Allows agents to propose environmental rules that limit
+firm pollution output based on R&D spending.
+
+Traceability: REQ-022
 
 Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
 ```
@@ -599,7 +520,7 @@ Types: `feat`, `fix`, `refactor`, `docs`, `test`, `chore`
 
 1. Create feature branch from `main`
 2. Implement feature with tests
-3. Ensure all tests pass and coverage remains ≥95%
+3. Ensure all 892+ tests pass
 4. Format and lint: `ruff format . && ruff check --fix .`
 5. Commit with clear message
 6. Push and create PR
@@ -614,66 +535,33 @@ When adding features, trace them to requirements:
 def new_feature():
     """Implement XYZ capability.
 
-    Satisfies REQ-007: The system shall support custom utility functions.
+    Traceability: REQ-007, PROP-004
     """
 ```
 
-Current requirements (see `AgentSocietyPlanning/spec/requirements.md`):
-- REQ-001 through REQ-006: Core simulation
-- PROP-001: Determinism
-- PROP-002: Consistency
+Requirements are in `AgentSocietyPlanning/spec/requirements.md`:
+- REQ-001 through REQ-037: Full DSGE-HA simulation requirements
+- PROP-001 through PROP-006: Formal invariant properties
 
-## Performance Optimization
+## Performance
 
-### Profiling Hot Paths
+### Bottlenecks
 
-```python
-import time
+1. **LLM latency** (dominant in LLM mode): ~1-3s per batch call
+2. **VFI solver** (initial convergence): ~5-30s one-time, <0.1s/agent after
+3. **Tatonnement**: <1s per period
+4. **Pareto computation**: O(N^2), disable for N > 200
 
-start = time.perf_counter()
-result = expensive_function()
-elapsed = time.perf_counter() - start
-log.info("function.timing", function="expensive_function", elapsed_ms=elapsed*1000)
-```
+### Memory
 
-### Common Bottlenecks
-
-1. **Pareto computation**: O(N²), disable for N > 200
-2. **Gini calculation**: O(N log N), unavoidable but fast
-3. **Coalition clustering**: O(N × k × iterations)
-
-### Memory Optimization
-
-For long simulations, consider:
-
-```python
-# Clear old history entries
-if len(lead.history) > 1000:
-    lead.history = lead.history[-100:]  # Keep last 100
-```
+- Per household: ~1KB
+- Per period state: ~100KB for 50 agents
+- Full history (100 periods): ~10MB
 
 ## Release Process
 
-1. Update version in `pyproject.toml` and `__init__.py`
-2. Update CHANGELOG.md
-3. Run full test suite: `pytest --cov`
-4. Build: `rye build` or `python -m build`
-5. Tag release: `git tag v0.2.0 && git push --tags`
-6. Create GitHub release with notes
-
-## Getting Help
-
-- **Issues**: Check existing issues on GitHub
-- **Documentation**: See `docs/` and `AgentSocietyPlanning/spec/`
-- **Code examples**: Check `tests/` for usage patterns
-- **Specifications**: See `AgentSocietyPlanning/spec/*.md`
-
-## Contributing
-
-Contributions are welcome. Please:
-
-1. Open an issue to discuss major changes
-2. Follow the coding standards in this guide
-3. Add tests for new features (maintain ≥95% coverage)
-4. Update documentation as needed
-5. Use Conventional Commits format
+1. Update version in `pyproject.toml` and `src/emergent_constitution/__init__.py`
+2. Run full test suite: `pytest --cov`
+3. Build: `rye build` or `python -m build`
+4. Tag release: `git tag v0.2.0 && git push --tags`
+5. Create GitHub release with notes
