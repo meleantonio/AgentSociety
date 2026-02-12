@@ -273,9 +273,6 @@ class ConstitutionEngine:
             # Non-negativity: taxes cannot exceed income
             tax = max(0.0, min(tax, income))
             household.taxes_paid = tax
-            household.wealth -= tax
-            # Ensure wealth doesn't go below zero
-            household.wealth = max(household.wealth, 0.0)
             total_revenue += tax
 
         return updated, total_revenue
@@ -314,7 +311,6 @@ class ConstitutionEngine:
             for household in updated:
                 transfer = transfers.get(household.id, 0.0)
                 household.transfers_received += transfer
-                household.wealth += transfer
                 distributed += transfer
             remaining_revenue -= distributed
 

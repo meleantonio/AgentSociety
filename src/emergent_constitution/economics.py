@@ -428,10 +428,12 @@ def enforce_budget_constraint(
     else:
         budget_adjusted = budget
 
-    # Step 3: max consumption so that savings >= a_min - wealth
-    # savings = budget - consumption, a_{t+1} = wealth + savings >= a_min
-    # => consumption <= budget - (a_min - wealth) = budget - a_min + wealth
-    max_consumption = max(0.0, budget_adjusted - a_min + agent.wealth)
+    # Step 3: max consumption so that a_{t+1} >= a_min
+    # Under the DSGE-HA budget constraint:
+    #   a' = (1+r)*a + w*z*(1-l) - c - taxes + transfers
+    # The budget already equals (1+r)*a + w*z*labor - tax + transfer,
+    # so c_max = budget - a_min ensures a' >= a_min.
+    max_consumption = max(0.0, budget_adjusted - a_min)
 
     consumption = max(0.0, min(decision.consumption, max_consumption))
 

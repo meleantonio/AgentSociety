@@ -351,16 +351,16 @@ class TestEnforceBudgetConstraint:
         decision = EconomicDecision(consumption=500.0, leisure=0.2)
         budget = 200.0
         result = enforce_budget_constraint(decision, agent, budget, a_min=0.0)
-        # max_consumption = budget - a_min + wealth = 200 - 0 + 100 = 300
-        assert result.consumption == 300.0
+        # max_consumption = budget - a_min = 200 - 0 = 200
+        assert result.consumption == 200.0
 
     def test_a_min_constrains_consumption(self) -> None:
         agent = _make_household(wealth=100.0, labor_supply=0.8)
         decision = EconomicDecision(consumption=500.0, leisure=0.2)
         budget = 200.0
         result = enforce_budget_constraint(decision, agent, budget, a_min=50.0)
-        # max_consumption = 200 - 50 + 100 = 250
-        assert result.consumption == 250.0
+        # max_consumption = budget - a_min = 200 - 50 = 150
+        assert result.consumption == 150.0
 
     def test_zero_budget_zero_consumption(self) -> None:
         agent = _make_household(wealth=0.0, labor_supply=0.0)
