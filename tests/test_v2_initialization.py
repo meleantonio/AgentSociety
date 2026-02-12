@@ -328,3 +328,64 @@ class TestInitialMarketGuess:
         m2 = _initial_market_guess(config2, ps2.households)
         # Higher alpha -> lower labor share -> lower wage (roughly)
         assert m1.wage != m2.wage
+
+
+# ============================================================================
+# Homogeneous preferences initialization tests
+# ============================================================================
+
+
+class TestHomogeneousHouseholds:
+    def test_all_agents_same_params(self) -> None:
+        """With homogeneous_preferences=True, all agents share utility params."""
+        config = SimulationConfigV2(num_agents=30, seed=42, homogeneous_preferences=True)
+        ps, _ = initialize_simulation_v2(config)
+        ref = ps.households[0].utility_params
+        for h in ps.households[1:]:
+            assert h.utility_params.alpha == ref.alpha
+            assert h.utility_params.beta == ref.beta
+            assert h.utility_params.gamma == ref.gamma
+            assert h.utility_params.beta_discount == ref.beta_discount
+
+    def test_params_match_config(self) -> None:
+        """Homogeneous params should come from config-level fields."""
+        config = SimulationConfigV2(
+            num_agents=20,
+            seed=42,
+            utility_alpha=0.5,
+            utility_beta=0.3,
+            utility_gamma=0.2,
+            utility_beta_discount=0.98,
+        )
+        ps, _ = initialize_simulation_v2(config)
+        for h in ps.households:
+            assert h.utility_params.alpha == 0.5
+            assert h.utility_params.beta == 0.3
+            assert h.utility_params.gamma == 0.2
+            assert h.utility_params.beta_discount == 0.98
+
+    def test_heterogeneous_agents_differ(self) -> None:
+        """With homogeneous_preferences=False, agents should have diverse params."""
+        config = SimulationConfigV2(num_agents=30, seed=42, homogeneous_preferences=False)
+        ps, _ = initialize_simulation_v2(config)
+        alphas = {h.utility_params.alpha for h in ps.households}
+        # With Dirichlet draw over 30 agents, should have >1 distinct alpha
+        assert len(alphas) > 1
+
+    def test_value_vector_still_heterogeneous(self) -> None:
+        """Even with homogeneous prefs, value vectors should differ."""
+        config = SimulationConfigV2(num_agents=30, seed=42, homogeneous_preferences=True)
+        ps, _ = initialize_simulation_v2(config)
+        equalities = {h.value_vector.equality for h in ps.households}
+        assert len(equalities) > 1
+
+    def test_determinism_homogeneous(self) -> None:
+        """Same seed + homogeneous should give identical results."""
+        config = SimulationConfigV2(num_agents=20, seed=77, homogeneous_preferences=True)
+        ps1, _ = initialize_simulation_v2(config)
+        ps2, _ = initialize_simulation_v2(config)
+        for h1, h2 in zip(ps1.households, ps2.households, strict=False):
+            assert h1.wealth == h2.wealth
+            assert h1.productivity == h2.productivity
+            assert h1.utility_params == h2.utility_params
+            assert h1.value_vector == h2.value_vector

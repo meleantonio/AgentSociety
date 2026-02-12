@@ -377,3 +377,170 @@ class TestInternalMethods:
         func = [[1.0] * solver.n_z for _ in range(solver.n_a)]
         val = solver._linear_interp(1e6, func, 0)
         assert val == func[-1][0]
+
+
+# ============================================================================
+# _is_homogeneous tests
+# ============================================================================
+
+
+class TestIsHomogeneous:
+    def test_empty_list(self) -> None:
+        assert NumericalSolver._is_homogeneous([]) is True
+
+    def test_single_agent(self) -> None:
+        h = _make_household()
+        assert NumericalSolver._is_homogeneous([h]) is True
+
+    def test_identical_agents(self) -> None:
+        agents = [_make_household(f"agent_{i:04d}", wealth=50.0 + i * 10) for i in range(5)]
+        assert NumericalSolver._is_homogeneous(agents) is True
+
+    def test_different_alpha(self) -> None:
+        h1 = _make_household("a0", alpha=0.4, beta=0.3, gamma=0.3)
+        h2 = _make_household("a1", alpha=0.5, beta=0.2, gamma=0.3)
+        assert NumericalSolver._is_homogeneous([h1, h2]) is False
+
+    def test_different_discount(self) -> None:
+        h1 = _make_household("a0", beta_discount=0.95)
+        h2 = _make_household("a1", beta_discount=0.90)
+        assert NumericalSolver._is_homogeneous([h1, h2]) is False
+
+
+# ============================================================================
+# solve_vfi_shared tests
+# ============================================================================
+
+
+class TestSolveVfiShared:
+    def test_returns_grids(self) -> None:
+        solver, _, _ = _make_solver()
+        policy_c, policy_l = solver.solve_vfi_shared(
+            alpha=0.4,
+            beta_param=0.3,
+            gamma=0.3,
+            beta_discount=0.95,
+            wage=1.0,
+            interest_rate=0.05,
+            public_goods=1.0,
+            tax_function=_no_tax,
+            transfer=0.0,
+        )
+        assert len(policy_c) == solver.n_a
+        assert len(policy_c[0]) == solver.n_z
+        assert len(policy_l) == solver.n_a
+        assert len(policy_l[0]) == solver.n_z
+
+    def test_finite_values(self) -> None:
+        solver, _, _ = _make_solver()
+        policy_c, policy_l = solver.solve_vfi_shared(
+            alpha=0.4,
+            beta_param=0.3,
+            gamma=0.3,
+            beta_discount=0.95,
+            wage=1.0,
+            interest_rate=0.05,
+            public_goods=1.0,
+            tax_function=_no_tax,
+            transfer=0.0,
+        )
+        for ai in range(solver.n_a):
+            for zi in range(solver.n_z):
+                assert math.isfinite(policy_c[ai][zi])
+                assert math.isfinite(policy_l[ai][zi])
+
+    def test_consumption_generally_increasing_in_assets(self) -> None:
+        """Higher-asset grid points should broadly have higher consumption."""
+        solver, _, _ = _make_solver()
+        policy_c, _ = solver.solve_vfi_shared(
+            alpha=0.4,
+            beta_param=0.3,
+            gamma=0.3,
+            beta_discount=0.95,
+            wage=1.0,
+            interest_rate=0.05,
+            public_goods=1.0,
+            tax_function=_no_tax,
+            transfer=0.0,
+        )
+        for zi in range(solver.n_z):
+            # Top-quartile asset consumption > bottom-quartile
+            low_avg = sum(policy_c[ai][zi] for ai in range(5)) / 5
+            high_avg = sum(policy_c[ai][zi] for ai in range(solver.n_a - 5, solver.n_a)) / 5
+            assert high_avg > low_avg
+
+
+# ============================================================================
+# Fast path vs slow path correctness
+# ============================================================================
+
+
+class TestFastPathMatchesSlowPath:
+    def test_fast_path_matches_per_agent(self) -> None:
+        """Shared VFI + interpolation should produce same results as per-agent VFI."""
+        solver, grid, _ = _make_solver()
+        alpha, beta_param, gamma, beta_discount = 0.4, 0.3, 0.3, 0.95
+        households = [
+            _make_household(
+                f"agent_{i:04d}",
+                wealth=20.0 + i * 30,
+                productivity=grid[i % len(grid)],
+                productivity_index=i % len(grid),
+                alpha=alpha,
+                beta=beta_param,
+                gamma=gamma,
+                beta_discount=beta_discount,
+            )
+            for i in range(5)
+        ]
+        market = MarketState(wage=1.0, interest_rate=0.05)
+
+        # Fast path (solve_all auto-detects homogeneity)
+        fast_decisions = solver.solve_all(households, market, public_goods=1.0)
+
+        # Slow path (per-agent)
+        slow_decisions: dict[str, EconomicDecision] = {}
+        for h in households:
+            d = solver.solve_household(
+                h,
+                wage=1.0,
+                interest_rate=0.05,
+                public_goods=1.0,
+                tax_function=lambda income: 0.0,
+                transfer=0.0,
+            )
+            slow_decisions[h.id] = d
+
+        for h in households:
+            assert abs(fast_decisions[h.id].consumption - slow_decisions[h.id].consumption) < 1e-10
+            assert abs(fast_decisions[h.id].leisure - slow_decisions[h.id].leisure) < 1e-10
+
+    def test_heterogeneous_uses_slow_path(self) -> None:
+        """When agents differ, solve_all should still return valid results."""
+        solver, grid, _ = _make_solver()
+        households = [
+            _make_household(
+                "agent_0000",
+                wealth=100.0,
+                productivity=grid[0],
+                productivity_index=0,
+                alpha=0.4,
+                beta=0.3,
+                gamma=0.3,
+            ),
+            _make_household(
+                "agent_0001",
+                wealth=100.0,
+                productivity=grid[1],
+                productivity_index=1,
+                alpha=0.5,
+                beta=0.2,
+                gamma=0.3,
+            ),
+        ]
+        market = MarketState(wage=1.0, interest_rate=0.05)
+        decisions = solver.solve_all(households, market, public_goods=1.0)
+        assert len(decisions) == 2
+        for d in decisions.values():
+            assert d.consumption >= 0.0
+            assert 0.0 <= d.leisure <= 1.0
