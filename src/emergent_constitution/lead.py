@@ -44,13 +44,11 @@ from emergent_constitution.models.decisions import (
 from emergent_constitution.models.firm import FirmState
 from emergent_constitution.models.history import (
     HistoryEntry,
-    HistoryEntryV2,
     PeriodState,
     SimulationOutput,
     SimulationOutputV2,
-    WelfareSummary,
 )
-from emergent_constitution.models.household import HouseholdState, OccupationalRole
+from emergent_constitution.models.household import HouseholdState
 from emergent_constitution.models.market import MarketState
 from emergent_constitution.models.proposal import (
     ConstitutionalProposal,
@@ -62,7 +60,7 @@ from emergent_constitution.models.proposal import (
 from emergent_constitution.models.shocks import ShockState
 from emergent_constitution.models.tick import TickState
 from emergent_constitution.numerical_solver import NumericalSolver
-from emergent_constitution.observer import observe_tick
+from emergent_constitution.observer import ObserverV2, observe_tick
 from emergent_constitution.rng import SimulationRNG
 from emergent_constitution.shock_generators import (
     draw_aggregate_tfp,
@@ -463,10 +461,10 @@ class LeadV2:
                 transition_matrix=period_state.shocks.transition_matrix,
             )
 
-        # Observation history
-        self.history: list[HistoryEntryV2] = []
-        self._prev_constitution: ConstitutionV2 | None = None
-        self._cumulative_welfare: float = 0.0
+        # Observer (REQ-030, REQ-031, REQ-032)
+        self.observer = ObserverV2(config)
+        # Convenience alias — shares same list object as observer.history
+        self.history = self.observer.history
 
         # Track log(A) for aggregate TFP AR(1) process
         self._prev_log_a: float = 0.0  # log(1.0) = 0
@@ -495,22 +493,7 @@ class LeadV2:
 
         log.info("simulation_v2.completed", total_periods=self.config.max_periods)
 
-        # Compute welfare summary
-        total_welfare = sum(h.realized_utility for h in self.period_state.households)
-        welfare_summary = WelfareSummary(
-            llm_total_welfare=total_welfare,
-            benchmark_total_welfare=None,
-        )
-
-        return SimulationOutputV2(
-            constitution=self.period_state.constitution.model_copy(deep=True),
-            history=list(self.history),
-            final_households=[h.model_copy(deep=True) for h in self.period_state.households],
-            final_firms=[f.model_copy(deep=True) for f in self.period_state.firms],
-            welfare_summary=welfare_summary,
-            seed=self.config.seed,
-            total_periods=self.config.max_periods,
-        )
+        return self.observer.finalize(self.period_state)
 
     def _advance_period(self, t: int) -> PeriodState:
         """Execute one period with the 9-step lifecycle.
@@ -1097,6 +1080,9 @@ class LeadV2:
     ) -> None:
         """Record observation statistics at observer_interval periods.
 
+        Delegates to ObserverV2.observe() which computes all REQ-030 stats
+        including Pareto efficiency, Gini, welfare, firm stats, etc.
+
         Args:
             t: Current period.
             households: Updated household states.
@@ -1109,79 +1095,18 @@ class LeadV2:
         if t % self.config.observer_interval != 0:
             return
 
-        wealths = [h.wealth for h in households]
-        n = len(wealths)
-
-        # Gini coefficient
-        gini = self._compute_gini(wealths)
-
-        # Wealth statistics
-        mean_wealth = sum(wealths) / n if n > 0 else 0.0
-        sorted_w = sorted(wealths)
-        median_wealth = (
-            (sorted_w[n // 2] if n % 2 == 1 else (sorted_w[n // 2 - 1] + sorted_w[n // 2]) / 2.0)
-            if n > 0
-            else 0.0
-        )
-
-        # Wealth quantiles [p10, p25, p50, p75, p90]
-        quantiles = []
-        if n > 0:
-            for p in [0.10, 0.25, 0.50, 0.75, 0.90]:
-                idx = min(int(p * n), n - 1)
-                quantiles.append(sorted_w[idx])
-
-        # Unemployment rate
-        unemployed = sum(1 for h in households if h.role == OccupationalRole.UNEMPLOYED)
-        unemployment_rate = unemployed / n if n > 0 else 0.0
-
-        # Firm statistics
-        num_firms = len(firms)
-        mean_firm_size = (
-            sum(len(f.worker_ids) for f in firms) / num_firms if num_firms > 0 else 0.0
-        )
-        total_rd = sum(f.rd_spend for f in firms)
-
-        # Social welfare
-        social_welfare = sum(h.realized_utility for h in households)
-        self._cumulative_welfare += social_welfare
-
-        # Rule changes
-        rule_changes = self._detect_rule_changes_v2(self._prev_constitution, constitution)
-
-        entry = HistoryEntryV2(
+        period_snapshot = PeriodState(
             period=t,
-            gini=gini,
-            pareto_score=1.0,  # Full Pareto computation deferred to Observer (Task 12)
-            aggregate_output=market.aggregate_output,
-            aggregate_consumption=sum(h.consumption for h in households),
-            aggregate_investment=market.aggregate_investment,
-            mean_wealth=mean_wealth,
-            median_wealth=median_wealth,
-            wealth_quantiles=quantiles,
-            unemployment_rate=unemployment_rate,
-            num_active_firms=num_firms,
-            mean_firm_size=mean_firm_size,
-            aggregate_rd_spend=total_rd,
-            social_welfare=social_welfare,
-            cumulative_welfare=self._cumulative_welfare,
-            wage=market.wage,
-            interest_rate=market.interest_rate,
-            rule_changes=rule_changes,
-            constitution_snapshot=constitution.model_copy(deep=True),
+            households=households,
+            firms=firms,
+            market=market,
+            shocks=self.period_state.shocks,
+            constitution=constitution,
+            proposals=proposals,
+            votes=votes,
         )
 
-        self.history.append(entry)
-        self._prev_constitution = constitution.model_copy(deep=True)
-
-        log.info(
-            "observation_v2.recorded",
-            period=t,
-            gini=round(gini, 4),
-            mean_wealth=round(mean_wealth, 2),
-            social_welfare=round(social_welfare, 2),
-            num_firms=num_firms,
-        )
+        self.observer.observe(period_snapshot)
 
     # ------------------------------------------------------------------
     # Helpers
@@ -1202,72 +1127,3 @@ class LeadV2:
         # Use the rate from the first tax rule
         rate = tax_rules[0].parameters.get("rate", 0.0)
         return max(0.0, min(1.0, float(rate)))
-
-    @staticmethod
-    def _compute_gini(values: list[float]) -> float:
-        """Compute the Gini coefficient of a list of values.
-
-        Args:
-            values: Non-negative values.
-
-        Returns:
-            Gini in [0, 1].
-        """
-        n = len(values)
-        if n < 2:
-            return 0.0
-        sorted_v = sorted(values)
-        total = sum(sorted_v)
-        if total <= 0.0:
-            return 0.0
-        # Gini = (2 * sum(i * x_i) - (n+1) * sum(x_i)) / (n * sum(x_i))
-        weighted_sum = sum((i + 1) * v for i, v in enumerate(sorted_v))
-        return (2.0 * weighted_sum - (n + 1) * total) / (n * total)
-
-    @staticmethod
-    def _detect_rule_changes_v2(
-        prev: ConstitutionV2 | None,
-        current: ConstitutionV2,
-    ) -> list[str]:
-        """Detect changes between two v2 constitutions.
-
-        Args:
-            prev: Previous constitution, or None for first observation.
-            current: Current constitution.
-
-        Returns:
-            List of human-readable change descriptions.
-        """
-        if prev is None:
-            return []
-
-        changes: list[str] = []
-
-        # Check voting rule change
-        if prev.voting_rule != current.voting_rule:
-            changes.append(f"voting_rule: {prev.voting_rule} -> {current.voting_rule}")
-
-        # Check for added, modified, and removed rules
-        prev_names = set(prev.rules.keys())
-        curr_names = set(current.rules.keys())
-
-        for name in curr_names - prev_names:
-            changes.append(f"rule added: {name}")
-
-        for name in prev_names - curr_names:
-            changes.append(f"rule removed: {name}")
-
-        for name in prev_names & curr_names:
-            prev_rule = prev.rules[name]
-            curr_rule = current.rules[name]
-            if prev_rule.parameters != curr_rule.parameters:
-                changes.append(
-                    f"rule modified: {name} params "
-                    f"{prev_rule.parameters} -> {curr_rule.parameters}"
-                )
-            if prev_rule.version != curr_rule.version:
-                changes.append(
-                    f"rule version: {name} v{prev_rule.version} -> v{curr_rule.version}"
-                )
-
-        return changes

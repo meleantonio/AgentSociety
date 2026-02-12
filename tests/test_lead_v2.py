@@ -20,6 +20,7 @@ from emergent_constitution.models.decisions import EconomicDecision, Entrepreneu
 from emergent_constitution.models.history import HistoryEntryV2, PeriodState, SimulationOutputV2
 from emergent_constitution.models.market import MarketState
 from emergent_constitution.models.shocks import ShockState
+from emergent_constitution.observer import ObserverV2, detect_rule_changes_v2
 
 # ============================================================================
 # Fixtures
@@ -101,7 +102,7 @@ class TestLeadV2Init:
         assert len(lead.period_state.households) == 20
         assert lead.period_state.period == 0
         assert lead.history == []
-        assert lead._cumulative_welfare == 0.0
+        assert lead.observer._cumulative_welfare == 0.0
 
     def test_llm_mode_initialization(self, mock_config: SimulationConfigV2) -> None:
         """LLM mode: LLM engine created, solver also created as fallback."""
@@ -445,21 +446,21 @@ class TestGiniComputation:
 
     def test_perfect_equality(self) -> None:
         """All equal values -> Gini = 0."""
-        gini = LeadV2._compute_gini([100.0, 100.0, 100.0, 100.0])
+        gini = ObserverV2._compute_gini([100.0, 100.0, 100.0, 100.0])
         assert gini == pytest.approx(0.0, abs=1e-10)
 
     def test_maximal_inequality(self) -> None:
         """One agent has everything -> Gini near 1."""
-        gini = LeadV2._compute_gini([0.0, 0.0, 0.0, 1000.0])
+        gini = ObserverV2._compute_gini([0.0, 0.0, 0.0, 1000.0])
         assert gini > 0.5
 
     def test_single_agent(self) -> None:
         """Single agent -> Gini = 0."""
-        assert LeadV2._compute_gini([100.0]) == 0.0
+        assert ObserverV2._compute_gini([100.0]) == 0.0
 
     def test_empty_list(self) -> None:
         """Empty list -> Gini = 0."""
-        assert LeadV2._compute_gini([]) == 0.0
+        assert ObserverV2._compute_gini([]) == 0.0
 
 
 class TestRuleChangeDetection:
@@ -471,7 +472,7 @@ class TestRuleChangeDetection:
 
         c1 = create_default_constitution()
         c2 = c1.model_copy(deep=True)
-        changes = LeadV2._detect_rule_changes_v2(c1, c2)
+        changes = detect_rule_changes_v2(c1, c2)
         assert changes == []
 
     def test_first_observation(self) -> None:
@@ -479,7 +480,7 @@ class TestRuleChangeDetection:
         from emergent_constitution.models.constitution import create_default_constitution
 
         c = create_default_constitution()
-        changes = LeadV2._detect_rule_changes_v2(None, c)
+        changes = detect_rule_changes_v2(None, c)
         assert changes == []
 
     def test_rule_parameter_change(self) -> None:
@@ -489,7 +490,7 @@ class TestRuleChangeDetection:
         c1 = create_default_constitution()
         c2 = c1.model_copy(deep=True)
         c2.rules["flat_tax"].parameters["rate"] = 0.25
-        changes = LeadV2._detect_rule_changes_v2(c1, c2)
+        changes = detect_rule_changes_v2(c1, c2)
         assert any("flat_tax" in c and "modified" in c for c in changes)
 
     def test_rule_added(self) -> None:
@@ -508,7 +509,7 @@ class TestRuleChangeDetection:
             parameters={"minimum_wage": 5.0},
             description="Test rule",
         )
-        changes = LeadV2._detect_rule_changes_v2(c1, c2)
+        changes = detect_rule_changes_v2(c1, c2)
         assert any("new_rule" in c and "added" in c for c in changes)
 
     def test_rule_removed(self) -> None:
@@ -518,5 +519,5 @@ class TestRuleChangeDetection:
         c1 = create_default_constitution()
         c2 = c1.model_copy(deep=True)
         del c2.rules["private_property"]
-        changes = LeadV2._detect_rule_changes_v2(c1, c2)
+        changes = detect_rule_changes_v2(c1, c2)
         assert any("private_property" in c and "removed" in c for c in changes)
