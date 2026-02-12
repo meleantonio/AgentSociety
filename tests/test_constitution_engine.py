@@ -331,7 +331,8 @@ class TestEnforceTaxes:
         )
         updated, revenue = engine.enforce_taxes(households, constitution, market)
         assert updated[0].taxes_paid <= 10.0
-        assert updated[0].wealth >= 0.0
+        # enforce_taxes no longer modifies wealth; it only records taxes_paid
+        assert updated[0].wealth == 100.0
 
     def test_original_households_not_mutated(
         self,

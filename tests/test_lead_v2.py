@@ -440,6 +440,35 @@ class TestUpdateStates:
         for h in updated:
             assert h.wealth >= short_mock_config.a_min
 
+    def test_budget_constraint_formula(self, short_mock_config: SimulationConfigV2) -> None:
+        """Step 8: a' = (1+r)*a + w*z*(1-l) - c - taxes + transfers.
+
+        Verify the DSGE-HA budget constraint is correctly applied.
+        """
+        lead = LeadV2(short_mock_config)
+        households = [h.model_copy(deep=True) for h in lead.period_state.households]
+        market = lead.period_state.market
+
+        # Zero consumption and no taxes/transfers
+        decisions = {h.id: EconomicDecision(consumption=0.0, leisure=0.5) for h in households}
+        updated = lead._update_states(households, decisions, market, 0.0)
+
+        for orig, upd in zip(households, updated, strict=True):
+            labor_income = market.wage * orig.productivity * 0.5
+            expected = (
+                (1.0 + market.interest_rate) * orig.wealth
+                + labor_income
+                - 0.0  # consumption
+                - orig.taxes_paid
+                + orig.transfers_received
+            )
+            expected = max(expected, short_mock_config.a_min)
+            assert upd.wealth == pytest.approx(expected, abs=1e-8), (
+                f"Agent {orig.id}: expected {expected:.4f}, got {upd.wealth:.4f}"
+            )
+            # Labor income should be reflected in updated household
+            assert upd.income == pytest.approx(labor_income, abs=1e-8)
+
 
 class TestGiniComputation:
     """Test the Gini coefficient helper."""

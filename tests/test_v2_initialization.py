@@ -205,6 +205,13 @@ class TestCreateHouseholds:
         for h in households:
             assert h.role == OccupationalRole.WORKER
 
+    def test_initial_labor_supply(self, setup: tuple) -> None:
+        """Households start with labor_supply=0.5 for period-1 market clearing."""
+        households, _ = setup
+        for h in households:
+            assert h.labor_supply == 0.5
+            assert h.leisure == 0.5
+
     def test_unique_ids(self, setup: tuple) -> None:
         households, _ = setup
         ids = [h.id for h in households]

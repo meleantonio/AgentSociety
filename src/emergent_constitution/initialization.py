@@ -194,6 +194,8 @@ def create_households(
                 utility_params=utility_params,
                 value_vector=value_vector,
                 role=OccupationalRole.WORKER,
+                labor_supply=0.5,
+                leisure=0.5,
             )
         )
 

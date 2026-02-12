@@ -526,6 +526,13 @@ class LeadV2:
             econ_decisions, households, market, constitution
         )
 
+        # Step 4b: Set labor_supply and income on households from validated decisions
+        # so that Step 6 (enforce_taxes) can compute taxes on actual income.
+        for h in households:
+            decision = econ_decisions.get(h.id, EconomicDecision(consumption=0.0, leisure=0.5))
+            h.labor_supply = 1.0 - decision.leisure
+            h.income = market.wage * h.productivity * h.labor_supply
+
         # Step 5: Execute production
         firms = self._execute_production(firms, entre_decisions, households, market)
 
@@ -541,6 +548,13 @@ class LeadV2:
 
         # Step 8: Update states
         households = self._update_states(households, econ_decisions, market, public_goods)
+
+        # Update market aggregates with actual post-Step-8 values
+        market = market.model_copy(
+            update={
+                "aggregate_consumption": sum(h.consumption for h in households),
+            }
+        )
 
         # Step 9: Observe
         self._observe_period(t, households, firms, market, constitution, proposals, votes)
@@ -1027,10 +1041,17 @@ class LeadV2:
             labor_supply = 1.0 - leisure
 
             # Income from labor
-            income = market.wage * h.productivity * labor_supply
+            labor_income = market.wage * h.productivity * labor_supply
 
-            # Savings: wealth after consumption
-            new_wealth = h.wealth - consumption
+            # Full DSGE-HA budget constraint:
+            # a' = (1+r)*a + w*z*(1-l) - c - taxes + transfers
+            new_wealth = (
+                (1.0 + market.interest_rate) * h.wealth
+                + labor_income
+                - consumption
+                - h.taxes_paid
+                + h.transfers_received
+            )
             new_wealth = max(new_wealth, self.config.a_min)
             savings = new_wealth - h.wealth
 
@@ -1040,7 +1061,7 @@ class LeadV2:
                     "consumption": consumption,
                     "leisure": leisure,
                     "labor_supply": labor_supply,
-                    "income": income,
+                    "income": labor_income,
                     "savings": savings,
                     "wealth": new_wealth,
                 }
