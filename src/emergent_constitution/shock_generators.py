@@ -187,6 +187,42 @@ def draw_idiosyncratic_shocks(
     return updated
 
 
+def draw_entrepreneurial_ability_shocks(
+    households: list[HouseholdState],
+    transition_matrix: list[list[float]],
+    grid: list[float],
+    rng: SimulationRNG,
+) -> list[HouseholdState]:
+    """Transition each agent's entrepreneurial_ability_index via Markov chain.
+
+    Same pattern as draw_idiosyncratic_shocks but using the ability Markov chain.
+
+    Args:
+        households: Current household states.
+        transition_matrix: Ability Markov transition matrix (row-stochastic).
+        grid: Ability grid values (exp(z) levels).
+        rng: Seeded RNG instance.
+
+    Returns:
+        List of HouseholdState with updated entrepreneurial_ability and
+        entrepreneurial_ability_index.
+    """
+    updated: list[HouseholdState] = []
+    for h in households:
+        row = transition_matrix[h.entrepreneurial_ability_index]
+        new_idx = _draw_from_cdf(rng, row)
+        new_ability = grid[new_idx]
+        updated.append(
+            h.model_copy(
+                update={
+                    "entrepreneurial_ability_index": new_idx,
+                    "entrepreneurial_ability": new_ability,
+                }
+            )
+        )
+    return updated
+
+
 def draw_aggregate_tfp(
     prev_log_a: float,
     rho_a: float,

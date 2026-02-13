@@ -31,6 +31,7 @@ from emergent_constitution.economics import (
     produce_output,
     validate_household_states,
 )
+from emergent_constitution.entrepreneurial_solver import EntrepreneurialSolver
 from emergent_constitution.initialization import initialize_simulation, initialize_simulation_v2
 from emergent_constitution.llm_citizen import CitizenLLM, PromptBuilder
 from emergent_constitution.llm_engine import LLMDecisionEngine
@@ -48,7 +49,7 @@ from emergent_constitution.models.history import (
     SimulationOutput,
     SimulationOutputV2,
 )
-from emergent_constitution.models.household import HouseholdState
+from emergent_constitution.models.household import HouseholdState, OccupationalRole
 from emergent_constitution.models.market import MarketState
 from emergent_constitution.models.proposal import (
     ConstitutionalProposal,
@@ -64,6 +65,7 @@ from emergent_constitution.observer import ObserverV2, observe_tick
 from emergent_constitution.rng import SimulationRNG
 from emergent_constitution.shock_generators import (
     draw_aggregate_tfp,
+    draw_entrepreneurial_ability_shocks,
     draw_idiosyncratic_shocks,
     draw_preference_shocks,
 )
@@ -461,6 +463,13 @@ class LeadV2:
                 transition_matrix=period_state.shocks.transition_matrix,
             )
 
+        # Entrepreneurial solver (used in both benchmark and LLM modes)
+        self._entre_solver = EntrepreneurialSolver(
+            config=config,
+            ability_grid=period_state.shocks.ability_grid,
+            ability_transition_matrix=period_state.shocks.ability_transition_matrix,
+        )
+
         # Observer (REQ-030, REQ-031, REQ-032)
         self.observer = ObserverV2(config)
         # Convenience alias — shares same list object as observer.history
@@ -471,6 +480,10 @@ class LeadV2:
 
         # Firm ID counter
         self._next_firm_id: int = 0
+
+        # Track recent proposal outcomes for LLM governance context
+        self._recent_rejections: list[tuple[str, str, str]] = []  # (agent_id, rule_name, reason)
+        self._recent_vote_outcomes: list[dict] = []  # Structured vote outcome records
 
         log.info(
             "simulation_v2.initialized",
@@ -547,7 +560,7 @@ class LeadV2:
         )
 
         # Step 8: Update states
-        households = self._update_states(households, econ_decisions, market, public_goods)
+        households = self._update_states(households, econ_decisions, market, public_goods, firms)
 
         # Update market aggregates with actual post-Step-8 values
         market = market.model_copy(
@@ -597,6 +610,15 @@ class LeadV2:
             shocks.productivity_grid,
             self.rng,
         )
+
+        # Entrepreneurial ability shocks
+        if shocks.ability_grid and shocks.ability_transition_matrix:
+            households = draw_entrepreneurial_ability_shocks(
+                households,
+                shocks.ability_transition_matrix,
+                shocks.ability_grid,
+                self.rng,
+            )
 
         # Aggregate TFP shock (REQ-016)
         new_tfp = draw_aggregate_tfp(
@@ -723,8 +745,8 @@ class LeadV2:
                 constitution=constitution,
             )
         else:
-            # Benchmark mode: no entrepreneurial actions
-            entre_decisions = {h.id: EntrepreneurialDecision() for h in households}
+            # Benchmark mode: solver-driven entrepreneurial decisions
+            entre_decisions = self._entre_solver.solve_all(households, firms, market)
 
         log.debug(
             "step3.decisions_collected",
@@ -843,15 +865,18 @@ class LeadV2:
             updated_firms.append(updated_firm)
 
         # Process new firm creation
+        aggregate_tfp = self.period_state.shocks.aggregate_tfp
         for h in households:
             decision = entre_decisions.get(h.id, EntrepreneurialDecision())
             if decision.create_firm and h.wealth >= self.config.min_firm_capital:
+                firm_tfp = h.entrepreneurial_ability * aggregate_tfp
                 new_firm = FirmState(
                     id=f"firm_{self._next_firm_id:04d}",
                     owner_id=h.id,
+                    owner_ability=h.entrepreneurial_ability,
                     capital=decision.capital_investment,
                     labor_demand=decision.labor_demand,
-                    tfp=1.0,
+                    tfp=firm_tfp,
                     rd_spend=decision.rd_spend,
                 )
                 self._next_firm_id += 1
@@ -861,6 +886,7 @@ class LeadV2:
                     firm_id=new_firm.id,
                     owner_id=h.id,
                     capital=decision.capital_investment,
+                    tfp=round(firm_tfp, 4),
                 )
 
         log.debug(
@@ -960,6 +986,10 @@ class LeadV2:
                 households=households,
                 constitution=constitution,
                 market=market,
+                history=self.observer.history[-5:] if self.observer.history else None,
+                recent_outcomes=self._recent_vote_outcomes[-20:]
+                if self._recent_vote_outcomes
+                else None,
             )
 
             # Extract proposals
@@ -969,6 +999,18 @@ class LeadV2:
                     if is_valid:
                         proposals.append(decision.proposal)
                     else:
+                        self._recent_rejections.append(
+                            (agent_id, decision.proposal.rule_name, reason or "validation_failed")
+                        )
+                        self._recent_vote_outcomes.append(
+                            {
+                                "period": t,
+                                "rule_name": decision.proposal.rule_name,
+                                "action": decision.proposal.action,
+                                "outcome": "rejected_validation",
+                                "reason": reason or "validation_failed",
+                            }
+                        )
                         log.debug(
                             "step7.proposal_rejected",
                             agent_id=agent_id,
@@ -996,9 +1038,25 @@ class LeadV2:
 
             outcome = tally_votes_v2(proposal, proposal_votes, constitution, total_eligible)
             vote_outcomes.append(outcome)
+            self._recent_vote_outcomes.append(
+                {
+                    "period": t,
+                    "rule_name": proposal.rule_name,
+                    "action": proposal.action,
+                    "outcome": "passed" if outcome.passed else "voted_down",
+                    "votes_for": outcome.votes_for,
+                    "votes_against": outcome.votes_against,
+                }
+            )
 
         # Apply passed proposals
         constitution = apply_passed_proposals_v2(vote_outcomes, constitution)
+
+        # Keep only recent outcomes (last 20) to avoid unbounded growth
+        if len(self._recent_vote_outcomes) > 50:
+            self._recent_vote_outcomes = self._recent_vote_outcomes[-20:]
+        if len(self._recent_rejections) > 50:
+            self._recent_rejections = self._recent_rejections[-20:]
 
         log.debug(
             "step7.governance_processed",
@@ -1019,6 +1077,7 @@ class LeadV2:
         econ_decisions: dict[str, EconomicDecision],
         market: MarketState,
         public_goods: float,
+        firms: list[FirmState] | None = None,
     ) -> list[HouseholdState]:
         """Apply all changes atomically: consumption, savings, utility.
 
@@ -1027,10 +1086,21 @@ class LeadV2:
             econ_decisions: Validated economic decisions.
             market: Market equilibrium.
             public_goods: Public goods per capita.
+            firms: Current period's active firms (for role/profit attribution).
 
         Returns:
             Updated household states with all per-period fields set.
         """
+        # Build firm lookup for entrepreneur profit attribution
+        active_firms = firms if firms is not None else self.period_state.firms
+        firm_profit_by_owner: dict[str, float] = {}
+        firm_id_by_owner: dict[str, str] = {}
+        owners_with_firms: set[str] = set()
+        for f in active_firms:
+            firm_profit_by_owner[f.owner_id] = f.profit
+            firm_id_by_owner[f.owner_id] = f.id
+            owners_with_firms.add(f.owner_id)
+
         updated: list[HouseholdState] = []
 
         for h in households:
@@ -1043,11 +1113,15 @@ class LeadV2:
             # Income from labor
             labor_income = market.wage * h.productivity * labor_supply
 
+            # Add firm profit for entrepreneurs
+            firm_profit = firm_profit_by_owner.get(h.id, 0.0)
+            total_income = labor_income + firm_profit
+
             # Full DSGE-HA budget constraint:
-            # a' = (1+r)*a + w*z*(1-l) - c - taxes + transfers
+            # a' = (1+r)*a + w*z*(1-l) + firm_profit - c - taxes + transfers
             new_wealth = (
                 (1.0 + market.interest_rate) * h.wealth
-                + labor_income
+                + total_income
                 - consumption
                 - h.taxes_paid
                 + h.transfers_received
@@ -1055,15 +1129,25 @@ class LeadV2:
             new_wealth = max(new_wealth, self.config.a_min)
             savings = new_wealth - h.wealth
 
+            # Update role based on firm ownership
+            role = h.role
+            if h.id in owners_with_firms:
+                role = OccupationalRole.ENTREPRENEUR
+            elif h.role == OccupationalRole.ENTREPRENEUR:
+                # Was entrepreneur but firm no longer exists (liquidated)
+                role = OccupationalRole.WORKER
+
             # Update household with per-period outcomes
             updated_h = h.model_copy(
                 update={
                     "consumption": consumption,
                     "leisure": leisure,
                     "labor_supply": labor_supply,
-                    "income": labor_income,
+                    "income": total_income,
                     "savings": savings,
                     "wealth": new_wealth,
+                    "role": role,
+                    "firm_id": firm_id_by_owner.get(h.id, None),
                 }
             )
 

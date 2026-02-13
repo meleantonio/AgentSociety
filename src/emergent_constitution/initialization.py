@@ -141,6 +141,8 @@ def create_households(
     rng: SimulationRNG,
     productivity_grid: list[float],
     stationary_dist: list[float],
+    ability_grid: list[float] | None = None,
+    ability_stationary_dist: list[float] | None = None,
 ) -> list[HouseholdState]:
     """Create N household agents with DSGE-HA initial conditions.
 
@@ -149,6 +151,8 @@ def create_households(
         rng: Seeded RNG instance.
         productivity_grid: Discrete productivity grid from Rouwenhorst.
         stationary_dist: Stationary distribution of productivity process.
+        ability_grid: Discrete entrepreneurial ability grid (optional).
+        ability_stationary_dist: Stationary distribution of ability process (optional).
 
     Returns:
         List of initialized HouseholdState objects.
@@ -185,6 +189,14 @@ def create_households(
         eq = rng.random()
         value_vector = ValueVectorV2(equality=eq, liberty=1.0 - eq)
 
+        # Entrepreneurial ability from ability grid (if provided)
+        if ability_grid is not None and ability_stationary_dist is not None:
+            ability_idx = _draw_from_distribution(rng, ability_stationary_dist)
+            entre_ability = ability_grid[ability_idx]
+        else:
+            ability_idx = 0
+            entre_ability = 1.0
+
         households.append(
             HouseholdState(
                 id=f"agent_{i:04d}",
@@ -196,6 +208,8 @@ def create_households(
                 role=OccupationalRole.WORKER,
                 labor_supply=0.5,
                 leisure=0.5,
+                entrepreneurial_ability=entre_ability,
+                entrepreneurial_ability_index=ability_idx,
             )
         )
 
@@ -270,8 +284,23 @@ def initialize_simulation_v2(
     # Stationary distribution for initial productivity assignment
     stationary_dist = stationary_distribution(transition_matrix)
 
+    # Entrepreneurial ability Rouwenhorst discretization
+    ability_grid, ability_transition_matrix = rouwenhorst_discretize(
+        rho=config.rho_e,
+        sigma=config.sigma_e,
+        n_states=config.num_e_states,
+    )
+    ability_stationary_dist = stationary_distribution(ability_transition_matrix)
+
     # Create households
-    households = create_households(config, rng, productivity_grid, stationary_dist)
+    households = create_households(
+        config,
+        rng,
+        productivity_grid,
+        stationary_dist,
+        ability_grid=ability_grid,
+        ability_stationary_dist=ability_stationary_dist,
+    )
 
     # Default constitution
     constitution: ConstitutionV2 = create_default_constitution()
@@ -284,6 +313,8 @@ def initialize_simulation_v2(
         productivity_grid=productivity_grid,
         transition_matrix=transition_matrix,
         aggregate_tfp=1.0,
+        ability_grid=ability_grid,
+        ability_transition_matrix=ability_transition_matrix,
     )
 
     period_state = PeriodState(

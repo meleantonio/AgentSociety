@@ -22,6 +22,7 @@ class FirmState(BaseModel):
 
     id: str
     owner_id: str
+    owner_ability: float = Field(default=1.0, gt=0.0)
     capital: float = Field(ge=0.0)
     labor_demand: float = Field(ge=0.0)
     tfp: float = Field(gt=0.0)
