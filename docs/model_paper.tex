@@ -1,0 +1,1010 @@
+% =============================================================================
+% Emergent Constitutions: A Heterogeneous-Agent Model with Endogenous
+% Governance and LLM-Augmented Political Decision Making
+% =============================================================================
+\documentclass[12pt]{article}
+
+% --- Packages ---
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{mathtools}
+\usepackage[numbers,sort&compress]{natbib}
+\usepackage{booktabs}
+\usepackage[ruled,vlined,linesnumbered]{algorithm2e}
+\usepackage{geometry}
+\usepackage{hyperref}
+\usepackage{cleveref}
+\usepackage{enumitem}
+\usepackage{graphicx}
+\usepackage{setspace}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{xcolor}
+
+% --- Page geometry ---
+\geometry{margin=1in}
+\onehalfspacing
+
+% --- Theorem environments ---
+\newtheorem{definition}{Definition}
+\newtheorem{proposition}{Proposition}
+\newtheorem{assumption}{Assumption}
+\newtheorem{remark}{Remark}
+
+% --- Custom commands ---
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\N}{\mathbb{N}}
+\newcommand{\calC}{\mathcal{C}}
+\newcommand{\calR}{\mathcal{R}}
+\newcommand{\calS}{\mathcal{S}}
+\newcommand{\calA}{\mathcal{A}}
+\newcommand{\calF}{\mathcal{F}}
+
+% --- Metadata ---
+\title{Emergent Constitutions: A Heterogeneous-Agent Model with Endogenous Governance and LLM-Augmented Political Decision Making}
+
+\author{%
+  Antonio Mele \\
+  \textit{Working Paper}
+}
+
+\date{\today}
+
+% =============================================================================
+\begin{document}
+% =============================================================================
+
+\maketitle
+
+% --- Abstract ---
+\begin{abstract}
+We develop a dynamic stochastic general equilibrium model with heterogeneous agents (DSGE-HA) in which governance institutions are fully endogenous. Agents choose between working and entrepreneurship, face idiosyncratic productivity and ability shocks discretized via the Rouwenhorst method, and collectively design taxation, redistribution, public goods provision, regulation, and voting rules through a constitutional framework. Economic decisions (consumption, savings, labor supply) are solved via value function iteration on the Bellman equation, while political decisions---proposal generation and voting---are delegated to large language models (LLMs) that receive structured economic context, mimicking bounded rationality in institutional design. The mutable constitution feeds back into economic equilibrium through fiscal policy and market regulation. We characterize the recursive competitive equilibrium, describe the computational algorithm, and discuss the model's implications for the co-evolution of institutions and inequality.
+\end{abstract}
+
+\medskip
+
+\noindent\textbf{Keywords:} Heterogeneous agents, endogenous institutions, occupational choice, LLM agents, constitutional dynamics, value function iteration
+
+\medskip
+
+\noindent\textbf{JEL Classification:} D72, E21, H11, L26, C63
+
+\newpage
+\tableofcontents
+\newpage
+
+% =============================================================================
+\section{Introduction}\label{sec:intro}
+% =============================================================================
+
+A central question in political economy is how institutions emerge, persist, and evolve. Standard macroeconomic models take institutions---tax codes, property rights, voting rules---as exogenous parameters. Yet real-world governance is the product of collective action by heterogeneous agents whose economic circumstances shape their political preferences and vice versa. This paper develops a computational framework that endogenizes the entire governance layer within a heterogeneous-agent macroeconomic model.
+
+\subsection{Motivation}
+
+The canonical incomplete-markets models of \citet{aiyagari1994}, \citet{huggett1993}, and \citet{krusellsmith1998} have yielded deep insights into wealth inequality, precautionary savings, and aggregate dynamics under idiosyncratic risk. However, these models typically hold fiscal policy fixed: the tax rate, transfer schedule, and public goods provision are parameters, not outcomes. In reality, agents vote on these policies, propose new rules, and form coalitions to advance their interests. The feedback loop---from economic inequality to political action to institutional change to new equilibrium outcomes---is precisely what this paper formalizes.
+
+\subsection{Contributions}
+
+This paper makes three contributions.
+
+\textbf{First}, we build a DSGE-HA model with occupational choice between workers and entrepreneurs, endogenous firm dynamics with R\&D-driven productivity growth, and Cobb-Douglas production at the firm level. Idiosyncratic productivity and entrepreneurial ability follow AR(1) processes discretized via the Rouwenhorst method \citep{kopeckysuen2010}, while aggregate TFP follows a separate AR(1) process. Household decisions are solved via value function iteration (VFI) on the Bellman equation with a discrete leisure grid.
+
+\textbf{Second}, we introduce a mutable constitutional framework with eight rule types---tax schedules, transfer programs, public goods provision, market regulation, firm regulation, voting procedures, property rights, and custom rules---each with sandboxed enforcement code. Constitutional rules feed back into agent budget constraints through taxation, transfers, and regulation. Agents propose, validate, vote on, and amend rules through a formal political process in which voting thresholds themselves are endogenous.
+
+\textbf{Third}, we integrate large language models (LLMs) into the political decision layer. Economic optimization is analytically well-defined (the Bellman equation has a known structure), so we solve it numerically. Political deliberation, by contrast, is open-ended: what tax rate to propose, how to frame a regulation, whether a means-tested transfer is better than a universal one. We delegate these decisions to LLMs that receive structured context about the economy and society, producing proposals and votes that reflect bounded rationality in institutional design. A benchmark mode with purely numerical governance enables controlled comparisons.
+
+\subsection{Related Literature}
+
+Our model builds on several strands of the literature. The heterogeneous-agent tradition originates with \citet{bewley1977}, \citet{huggett1993}, and \citet{aiyagari1994}, with \citet{krusellsmith1998} extending to aggregate shocks. \citet{cagettideNardi2006} introduce entrepreneurship into the Bewley framework. We follow their approach of modeling occupational choice with heterogeneous entrepreneurial ability but add endogenous governance and LLM-driven institutional dynamics.
+
+On the computational side, our discretization of AR(1) processes follows \citet{kopeckysuen2010}, who show that the Rouwenhorst method dominates Tauchen's method for highly persistent processes. Our VFI implementation uses exponentially-spaced asset grids and linear interpolation, standard techniques in the quantitative macro toolkit.
+
+The endogenous institutions literature includes \citet{acemoglurobinson2006}, who study the dynamics of political institutions and economic outcomes, and \citet{acemoglu2005}, who formalize the relationship between political power and economic institutions. Our model operationalizes these ideas computationally: agents with heterogeneous preferences over equality and liberty vote on the very rules that govern economic outcomes.
+
+The use of LLMs as economic agents is nascent. We contribute by showing how LLM-generated political decisions can be integrated into a fully specified general equilibrium model while preserving determinism (temperature zero, seeded RNG) and providing analytical fallback (benchmark mode).
+
+\medskip
+
+The remainder of the paper is organized as follows. \Cref{sec:environment} describes the model environment. \Cref{sec:governance} formalizes the constitutional framework. \Cref{sec:equilibrium} defines the recursive competitive equilibrium. \Cref{sec:computation} details the computational method. \Cref{sec:llm} discusses the LLM integration. \Cref{sec:calibration} presents the calibration. \Cref{sec:discussion} discusses results and implications. \Cref{sec:conclusion} concludes.
+
+
+% =============================================================================
+\section{Model Environment}\label{sec:environment}
+% =============================================================================
+
+\subsection{Time, Agents, and State Space}\label{sec:state}
+
+Time is discrete, indexed by $t = 0, 1, 2, \ldots, T$. The economy is populated by $N \geq 20$ agents, indexed by $i = 1, \ldots, N$.
+
+\begin{definition}[Individual State]
+Each agent $i$ at time $t$ is characterized by the individual state vector
+\begin{equation}\label{eq:individual_state}
+  s_{it} = (a_{it},\, z_{it},\, e_{it},\, o_{it}),
+\end{equation}
+where $a_{it} \in [\underline{a}, \infty)$ denotes assets (wealth), $z_{it} \in \calS_z$ is idiosyncratic labor productivity, $e_{it} \in \calS_e$ is entrepreneurial ability, and $o_{it} \in \{W, E\}$ denotes occupation (worker or entrepreneur).
+\end{definition}
+
+\begin{definition}[Aggregate State]
+The aggregate state at time $t$ is
+\begin{equation}\label{eq:aggregate_state}
+  \Gamma_t = (\mu_t,\, \calC_t,\, w_t,\, r_t,\, A_t),
+\end{equation}
+where $\mu_t$ is the cross-sectional distribution of individual states, $\calC_t$ is the constitution (a mutable set of rules), $w_t$ is the wage, $r_t$ is the interest rate, and $A_t$ is aggregate total factor productivity (TFP).
+\end{definition}
+
+
+\subsection{Preferences}\label{sec:preferences}
+
+Agents have Cobb-Douglas preferences over private consumption $c$, leisure $\ell$, and per-capita public goods $G$:
+
+\begin{equation}\label{eq:utility}
+  u(c, \ell, G) = c^{\alpha_u} \cdot \ell^{\beta_u} \cdot G^{\gamma_u}, \qquad \alpha_u + \beta_u + \gamma_u = 1,
+\end{equation}
+where $\alpha_u, \beta_u, \gamma_u > 0$ are the weights on consumption, leisure, and public goods, respectively. The constraint $\alpha_u + \beta_u + \gamma_u = 1$ ensures homogeneity of degree one.
+
+The lifetime objective is
+\begin{equation}\label{eq:lifetime}
+  \max \; \E_0 \sum_{t=0}^{\infty} \beta_d^{\, t} \, u(c_{it}, \ell_{it}, G_t),
+\end{equation}
+where $\beta_d \in (0, 1)$ is the subjective discount factor.
+
+\begin{remark}[Preference Heterogeneity]
+The model supports two modes. Under \emph{homogeneous preferences}, all agents share the same $(\alpha_u, \beta_u, \gamma_u, \beta_d)$, enabling a significant computational speedup: VFI is solved once and policies are interpolated per agent. Under \emph{heterogeneous preferences}, each agent draws utility weights from a Dirichlet distribution and $\beta_d$ from $U[0.9, 0.99]$, requiring per-agent VFI.
+\end{remark}
+
+In addition to economic preferences, each agent possesses an ideological value vector $v_i = (v_i^{eq}, v_i^{lib})$ with $v_i^{eq} + v_i^{lib} = 1$, where $v_i^{eq}$ represents the preference weight toward equality and $v_i^{lib}$ toward liberty. These values influence political decisions---agents with high $v_i^{eq}$ tend to favor redistribution, while those with high $v_i^{lib}$ favor low taxes and free markets.
+
+
+\subsection{Technology}\label{sec:technology}
+
+\subsubsection{Workers}
+
+A worker with productivity $z_{it}$ and leisure choice $\ell_{it} \in [0, 1]$ supplies effective labor
+\begin{equation}\label{eq:effective_labor}
+  h_{it} = z_{it} \cdot (1 - \ell_{it}),
+\end{equation}
+and earns labor income $w_t \cdot h_{it}$.
+
+\subsubsection{Entrepreneurs and Firms}
+
+An entrepreneur $i$ owns a firm $f$ that produces output according to the Cobb-Douglas production function
+\begin{equation}\label{eq:firm_production}
+  Y_f = A_f \cdot K_f^{\alpha} \cdot L_f^{1-\alpha},
+\end{equation}
+where $A_f = e_{it} \cdot A_t$ is firm-specific TFP (the product of the entrepreneur's ability and aggregate TFP), $K_f$ is the firm's capital, $L_f$ is effective labor hired, and $\alpha \in (0, 1)$ is the capital share.
+
+The first-order condition for optimal labor demand is
+\begin{equation}\label{eq:foc_labor}
+  (1 - \alpha) \cdot A_f \cdot K_f^{\alpha} \cdot L_f^{-\alpha} = w_t,
+\end{equation}
+yielding optimal labor
+\begin{equation}\label{eq:optimal_labor}
+  L_f^* = \left(\frac{(1-\alpha) \cdot A_f \cdot K_f^{\alpha}}{w_t}\right)^{1/\alpha}.
+\end{equation}
+
+Firm profit is
+\begin{equation}\label{eq:firm_profit}
+  \pi_f = Y_f - w_t L_f^* - (r_t + \delta) K_f,
+\end{equation}
+where $\delta$ is the depreciation rate and $r_t + \delta$ is the rental rate of capital.
+
+\subsubsection{R\&D and Firm-Specific TFP Growth}
+
+Active firms may invest in R\&D at expenditure $x_f^{rd}$. The probability of a TFP improvement is
+\begin{equation}\label{eq:rd_prob}
+  p_f = p_0 \cdot \sqrt{\frac{x_f^{rd}}{\bar{x}^{rd}}},
+\end{equation}
+where $p_0$ is the base success probability and $\bar{x}^{rd}$ is the mean R\&D spending across all active firms. Upon success, firm TFP updates as
+\begin{equation}\label{eq:rd_improvement}
+  A_f' = A_f \cdot (1 + \eta), \qquad \eta \sim \max\left\{0,\, \mathcal{N}(\mu_{rd}, \sigma_{rd}^2)\right\}.
+\end{equation}
+
+
+\subsection{Occupational Choice: Entry and Exit}\label{sec:entry_exit}
+
+\subsubsection{Firm Value}
+
+The value of a firm to an entrepreneur with ability $e$ and capital $K$ is the truncated present discounted value of expected profits:
+\begin{equation}\label{eq:firm_value}
+  V(e, K) = \sum_{\tau=0}^{H} \beta_f^{\, \tau} \, \E\!\left[\pi(e_\tau, K) \,\big|\, e_0 = e\right],
+\end{equation}
+where $H$ is the valuation horizon, $\beta_f$ is the firm discount factor, and the expectation is taken over the Markov evolution of entrepreneurial ability.
+
+\subsubsection{Entry Condition}
+
+A worker enters entrepreneurship if
+\begin{equation}\label{eq:entry}
+  V(e_i, K^*) > a_{it} \cdot \max\{r_t, 0\} + F,
+\end{equation}
+where $K^*$ is the optimal capital level (determined by grid search over the feasible set $[\underline{K}, a_{it} - F]$), $F$ is the sunk entry cost, and $\underline{K}$ is the minimum capital requirement.
+
+\subsubsection{Exit Condition}
+
+An existing entrepreneur exits (liquidates) if
+\begin{equation}\label{eq:exit}
+  V(e_i, K_f) < K_f,
+\end{equation}
+i.e., the present value of continuing falls below the liquidation value of the firm's capital.
+
+\subsubsection{Optimal Capital}
+
+The optimal capital level $K^*$ maximizes firm value subject to feasibility:
+\begin{equation}\label{eq:optimal_capital}
+  K^* = \arg\max_{K \in [\underline{K}, \, a_{it} - F]} V(e_i, K),
+\end{equation}
+solved via grid search over 20 candidate capital levels.
+
+
+\subsection{Stochastic Processes}\label{sec:shocks}
+
+The model features three sources of uncertainty.
+
+\subsubsection{Idiosyncratic Productivity}
+
+Labor productivity follows an AR(1) process in logs:
+\begin{equation}\label{eq:ar1_z}
+  \log z_{it} = \rho_z \log z_{i,t-1} + \varepsilon_{it}^z, \qquad \varepsilon_{it}^z \sim \mathcal{N}(0, \sigma_z^2).
+\end{equation}
+
+\subsubsection{Entrepreneurial Ability}
+
+Entrepreneurial ability follows an independent AR(1) process:
+\begin{equation}\label{eq:ar1_e}
+  \log e_{it} = \rho_e \log e_{i,t-1} + \varepsilon_{it}^e, \qquad \varepsilon_{it}^e \sim \mathcal{N}(0, \sigma_e^2).
+\end{equation}
+
+\subsubsection{Aggregate TFP}
+
+Aggregate TFP follows an AR(1) process:
+\begin{equation}\label{eq:ar1_A}
+  \log A_t = \rho_A \log A_{t-1} + \varepsilon_t^A, \qquad \varepsilon_t^A \sim \mathcal{N}(0, \sigma_A^2).
+\end{equation}
+
+\subsubsection{Rouwenhorst Discretization}
+
+The continuous AR(1) processes \eqref{eq:ar1_z} and \eqref{eq:ar1_e} are discretized into finite-state Markov chains using the Rouwenhorst method \citep{kopeckysuen2010}. For a process with persistence $\rho$ and innovation volatility $\sigma$:
+
+\begin{enumerate}[label=\textit{Step \arabic*.}]
+  \item Compute the unconditional standard deviation: $\sigma_z^{unc} = \sigma / \sqrt{1 - \rho^2}$.
+  \item Set grid bounds: $z_{max} = \sigma_z^{unc} \cdot \sqrt{n-1}$, where $n$ is the number of grid points.
+  \item Construct an equally-spaced log grid: $\{-z_{max}, -z_{max} + \Delta, \ldots, z_{max}\}$ with $\Delta = 2 z_{max}/(n-1)$.
+  \item Set the transition probability parameter: $p = (1 + \rho)/2$.
+  \item Build the transition matrix recursively. The base case ($n = 2$) is
+  \begin{equation}\label{eq:rouwenhorst_base}
+    \Pi_2 = \begin{pmatrix} p & 1-p \\ 1-p & p \end{pmatrix}.
+  \end{equation}
+  For $n > 2$, construct $\Pi_n$ from $\Pi_{n-1}$ via four-quadrant expansion:
+  \begin{equation}\label{eq:rouwenhorst_recursion}
+    \widetilde{\Pi}_n = p \begin{pmatrix} \Pi_{n-1} & \mathbf{0} \\ \mathbf{0}^\top & 0 \end{pmatrix}
+    + (1-p) \begin{pmatrix} \mathbf{0} & \Pi_{n-1} \\ 0 & \mathbf{0}^\top \end{pmatrix}
+    + (1-p) \begin{pmatrix} \mathbf{0}^\top & 0 \\ \Pi_{n-1} & \mathbf{0} \end{pmatrix}
+    + p \begin{pmatrix} 0 & \mathbf{0}^\top \\ \mathbf{0} & \Pi_{n-1} \end{pmatrix},
+  \end{equation}
+  followed by row normalization: $\Pi_n(i, \cdot) = \widetilde{\Pi}_n(i, \cdot) / \sum_j \widetilde{\Pi}_n(i, j)$.
+  \item Convert the log grid to levels: $\calS = \{\exp(z_1), \ldots, \exp(z_n)\}$.
+\end{enumerate}
+
+The stationary distribution $\pi^*$ of $\Pi$ is computed by power iteration until $\|\pi^{(k+1)} - \pi^{(k)}\|_\infty < 10^{-12}$.
+
+
+\subsection{Markets and Budget Constraints}\label{sec:markets}
+
+\subsubsection{Factor Market Clearing}
+
+In equilibrium, factor markets clear. Labor market clearing requires
+\begin{equation}\label{eq:labor_clearing}
+  \sum_{f \in \calF_t} L_f^*(w_t, r_t) = \sum_{i: o_{it} = W} z_{it} \cdot (1 - \ell_{it}),
+\end{equation}
+where the left-hand side is aggregate labor demand from firms and the right-hand side is aggregate effective labor supply from workers.
+
+Capital market clearing requires
+\begin{equation}\label{eq:capital_clearing}
+  \sum_{f \in \calF_t} K_f = \sum_{i=1}^{N} a_{it},
+\end{equation}
+where the left-hand side is aggregate capital demand (firm capital) and the right-hand side is aggregate savings.
+
+\subsubsection{Worker Budget Constraint}
+
+A worker faces the budget constraint
+\begin{equation}\label{eq:worker_budget}
+  a_{i,t+1} = (1 + r_t) a_{it} + w_t z_{it} (1 - \ell_{it}) - c_{it} - T(y_{it}) + Tr_{it},
+\end{equation}
+where $T(y_{it})$ is the tax schedule evaluated at labor income $y_{it} = w_t z_{it}(1 - \ell_{it})$, and $Tr_{it}$ is transfers received. Agents face the borrowing constraint $a_{i,t+1} \geq \underline{a}$.
+
+\subsubsection{Entrepreneur Budget Constraint}
+
+An entrepreneur additionally receives firm profit:
+\begin{equation}\label{eq:entre_budget}
+  a_{i,t+1} = (1 + r_t) a_{it} + w_t z_{it}(1 - \ell_{it}) + \pi_{f(i)} - c_{it} - T(y_{it}) + Tr_{it},
+\end{equation}
+where $\pi_{f(i)}$ is the profit of the firm owned by agent $i$.
+
+\subsubsection{Goods Market Identity}
+
+By Walras' law, the goods market clears:
+\begin{equation}\label{eq:goods_clearing}
+  Y_t = C_t + I_t + G_t,
+\end{equation}
+where $Y_t = \sum_f Y_f$ is aggregate output, $C_t = \sum_i c_{it}$ is aggregate consumption, $I_t = \sum_f \delta K_f$ is replacement investment, and $G_t$ is government (public goods) spending.
+
+
+% =============================================================================
+\section{Governance and Constitutional Framework}\label{sec:governance}
+% =============================================================================
+
+\subsection{Constitutional State Space}\label{sec:constitution_state}
+
+The constitution at time $t$ is a finite collection of rules:
+\begin{equation}\label{eq:constitution}
+  \calC_t = \{R_1, R_2, \ldots, R_M\},
+\end{equation}
+where each rule $R_m = (name_m, type_m, \theta_m, f_m(\cdot))$ consists of a unique identifier, a type from the set
+\begin{equation}\label{eq:rule_types}
+  \mathcal{T} = \{\text{tax\_schedule},\, \text{transfer\_program},\, \text{public\_goods},\, \text{market\_regulation},\, \text{firm\_regulation},\, \text{voting\_procedure},\, \text{property\_rights},\, \text{custom}\},
+\end{equation}
+a parameter vector $\theta_m$ (e.g., $\theta = \{rate: 0.2\}$ for a tax rule), and an enforcement function $f_m(\cdot)$ specified as a sandboxed expression.
+
+
+\subsection{Fiscal Policy}\label{sec:fiscal}
+
+\subsubsection{Taxation}
+
+The tax on agent $i$'s income is determined by all active rules of type \texttt{tax\_schedule}:
+\begin{equation}\label{eq:taxation}
+  T_i = \sum_{m: type_m = \text{tax\_schedule}} f_m(y_i; \theta_m),
+\end{equation}
+subject to the non-negativity constraint $T_i \in [0, y_i]$ (taxes cannot exceed income). The default rule is a flat tax: $T_i = \tau \cdot y_i$ with $\tau \in [0, 1]$.
+
+Total tax revenue is $R = \sum_{i=1}^{N} T_i$.
+
+\subsubsection{Public Goods}
+
+Public goods spending is determined by rules of type \texttt{public\_goods}:
+\begin{equation}\label{eq:public_goods}
+  G_t = \frac{\phi \cdot R}{N},
+\end{equation}
+where $\phi \in [0, 1]$ is the fraction of revenue allocated to public goods, specified by the constitutional rule parameters.
+
+\subsubsection{Transfers}
+
+The remaining revenue $R - \phi R$ is distributed according to transfer rules. Under equal-share redistribution:
+\begin{equation}\label{eq:equal_transfer}
+  Tr_i = \frac{(1 - \phi) R}{N}.
+\end{equation}
+Under means-tested redistribution:
+\begin{equation}\label{eq:means_tested}
+  Tr_i = \frac{(1 - \phi) R \cdot \omega_i}{\sum_{j=1}^{N} \omega_j}, \qquad \omega_i = \frac{1}{\max\{a_{it}, 1\}},
+\end{equation}
+so that poorer agents receive larger transfers.
+
+
+\subsection{Political Process}\label{sec:political}
+
+The constitutional amendment process follows four stages.
+
+\begin{enumerate}[label=\textit{Stage \arabic*.}]
+  \item \textbf{Proposal.} At proposal-interval periods (every $K_{prop}$ periods), each agent may propose one constitutional change. A proposal specifies an action $\in \{$add, modify, remove$\}$, a rule name, a rule type (for additions), parameter values, and optionally enforcement code.
+
+  \item \textbf{Validation.} Each proposal is validated against structural constraints:
+  \begin{itemize}
+    \item Tax rates must lie in $[0, 1]$.
+    \item Transfer methods must be recognized (equal-share, means-tested).
+    \item Public goods fractions must lie in $[0, 1]$.
+    \item Enforcement code must pass an AST-level safety check (restricted to arithmetic, comparisons, and safe builtins; no imports, function definitions, or attribute access).
+    \item Additions cannot duplicate existing rule names; modifications require existing rules; the active voting rule cannot be removed.
+  \end{itemize}
+  Invalid proposals are rejected before reaching the voting stage.
+
+  \item \textbf{Voting.} Each agent casts a vote (for or against) on each validated proposal. The outcome is determined by the currently active voting procedure rule with threshold $\bar{\theta} \in (0, 1]$:
+  \begin{equation}\label{eq:voting}
+    \text{Proposal passes} \iff
+    \begin{cases}
+      V_{for} > N \cdot \bar{\theta}, & \text{if } \bar{\theta} \leq 0.5 \text{ (majority)}, \\[4pt]
+      V_{for} \geq \lceil N \cdot \bar{\theta} \rceil, & \text{if } 0.5 < \bar{\theta} < 1 \text{ (supermajority)}, \\[4pt]
+      V_{for} = N, & \text{if } \bar{\theta} = 1 \text{ (unanimity)},
+    \end{cases}
+  \end{equation}
+  where $V_{for}$ is the number of votes in favor and $N$ is the total number of eligible voters. Ties are resolved in favor of the status quo.
+
+  \item \textbf{Amendment.} Passed proposals are applied to the constitution in order. Each application re-validates the resulting rule before activation. The constitution is immutable within a period and only updated between periods.
+\end{enumerate}
+
+
+\subsection{Endogenous Feedback}\label{sec:feedback}
+
+The distinguishing feature of this framework is the feedback loop between governance and economics. Constitutional rules determine:
+\begin{itemize}
+  \item The tax function $T(\cdot)$ that enters budget constraints \eqref{eq:worker_budget}--\eqref{eq:entre_budget};
+  \item The transfer schedule $Tr_i$ that enters household income;
+  \item Public goods $G_t$ that enters the utility function \eqref{eq:utility};
+  \item Market and firm regulations that constrain economic behavior.
+\end{itemize}
+These in turn affect prices $(w_t, r_t)$, wealth dynamics $a_{i,t+1}$, occupational choice, and ultimately the political preferences that generate new proposals. The constitution is thus endogenous in the deepest sense: it is both a determinant and a consequence of economic equilibrium.
+
+
+% =============================================================================
+\section{Equilibrium Definition}\label{sec:equilibrium}
+% =============================================================================
+
+\subsection{Worker's Problem}
+
+A worker with state $(a, z)$, facing prices $(w, r)$, public goods $G$, tax function $T(\cdot)$, and transfer $Tr$, solves the Bellman equation
+\begin{equation}\label{eq:bellman_worker}
+  V^W(a, z) = \max_{c, \ell} \left\{ u(c, \ell, G) + \beta_d \, \E\!\left[V(a', z') \,\big|\, z\right] \right\}
+\end{equation}
+subject to
+\begin{align}
+  a' &= (1 + r) a + w z (1 - \ell) - c - T(wz(1-\ell)) + Tr, \label{eq:bellman_budget}\\
+  a' &\geq \underline{a}, \label{eq:bellman_borrow}\\
+  c &\geq 0, \qquad \ell \in [0, 1], \label{eq:bellman_bounds}
+\end{align}
+where $V(a', z') = \max\{V^W(a', z'), V^E(a', z', e')\}$ incorporates the occupational choice.
+
+\subsection{Entrepreneur's Problem}
+
+An entrepreneur with state $(a, z, e)$ and firm capital $K$ solves
+\begin{equation}\label{eq:bellman_entre}
+  V^E(a, z, e) = \max_{c, \ell, K} \left\{ u(c, \ell, G) + \beta_d \, \E\!\left[V(a', z', e')\right] \right\}
+\end{equation}
+subject to the entrepreneur budget constraint \eqref{eq:entre_budget} and the entry/exit conditions of \Cref{sec:entry_exit}.
+
+\subsection{Market Clearing}
+
+\begin{definition}[Recursive Competitive Equilibrium]
+A \emph{recursive competitive equilibrium} (RCE) consists of:
+\begin{enumerate}
+  \item Value functions $V^W(a, z)$ and $V^E(a, z, e)$;
+  \item Policy functions $c(a, z)$, $\ell(a, z)$, and occupational choice $o(a, z, e)$;
+  \item Price functions $w(\Gamma)$ and $r(\Gamma)$;
+  \item A law of motion for the cross-sectional distribution $\mu_{t+1} = \Phi(\mu_t, \calC_t)$;
+  \item A law of motion for the constitution $\calC_{t+1} = \Psi(\calC_t, \mu_t, w_t, r_t)$;
+\end{enumerate}
+such that:
+\begin{enumerate}[label=(\alph*)]
+  \item Given prices and the constitution, agents optimize (solve their respective Bellman equations);
+  \item Factor markets clear (\Cref{eq:labor_clearing,eq:capital_clearing});
+  \item The goods market identity \eqref{eq:goods_clearing} holds;
+  \item The distribution evolves consistently with individual decisions and shocks;
+  \item The constitution evolves through the political process of \Cref{sec:political}, given the economic state.
+\end{enumerate}
+\end{definition}
+
+The key departure from standard RCE definitions is condition (e): the constitution is a state variable with an endogenous law of motion determined by agent proposals and votes.
+
+
+% =============================================================================
+\section{Computational Method}\label{sec:computation}
+% =============================================================================
+
+\subsection{Value Function Iteration}\label{sec:vfi}
+
+The worker's Bellman equation \eqref{eq:bellman_worker} is solved numerically via VFI on a discretized state space.
+
+\textbf{Asset grid.} We construct an exponentially-spaced grid of $N_a = 100$ asset levels on $[\underline{a}, a_{max}]$ with $a_{max} = 1000$:
+\begin{equation}\label{eq:asset_grid}
+  a_j = \underline{a} + (a_{max} - \underline{a}) \cdot \left(\frac{j}{N_a - 1}\right)^2, \qquad j = 0, 1, \ldots, N_a - 1.
+\end{equation}
+The quadratic spacing concentrates grid points near the borrowing constraint $\underline{a}$, where the policy function has the highest curvature.
+
+\textbf{Leisure grid.} A uniform grid of $N_\ell = 21$ leisure values: $\ell_k = k/20$ for $k = 0, 1, \ldots, 20$.
+
+\textbf{Consumption optimization.} For each $(a_j, z_s, \ell_k)$ triplet, the budget constraint determines the maximum feasible consumption $c_{max} = budget - \underline{a}$ where $budget = (1+r)a_j + wz_s(1-\ell_k) - T(wz_s(1-\ell_k)) + Tr$. We search over 11 equally-spaced consumption levels $c \in \{0, c_{max}/10, \ldots, c_{max}\}$.
+
+\textbf{Expected continuation value.} The conditional expectation $\E[V(a', z') \mid z_s]$ is computed as
+\begin{equation}\label{eq:ev}
+  \E[V(a', z') \mid z_s] = \sum_{s'=1}^{N_z} \Pi(s, s') \cdot V^{interp}(a', s'),
+\end{equation}
+where $\Pi$ is the Rouwenhorst transition matrix and $V^{interp}$ is the value function linearly interpolated on the asset grid.
+
+\textbf{Convergence.} VFI iterates until $\|V_{n+1} - V_n\|_\infty < \epsilon_{VFI}$ with $\epsilon_{VFI} = 10^{-6}$, or a maximum of 500 iterations.
+
+\begin{algorithm}[t]
+\caption{Value Function Iteration}\label{alg:vfi}
+\KwIn{Prices $(w, r)$, public goods $G$, tax function $T(\cdot)$, transfer $Tr$, transition matrix $\Pi$}
+\KwOut{Policy functions $c^*(a, z)$, $\ell^*(a, z)$}
+Initialize $V^0(a_j, z_s)$ for all $(j, s)$\;
+\For{$n = 1, \ldots, 500$}{
+  \For{$j = 1, \ldots, N_a$; $\; s = 1, \ldots, N_z$}{
+    $V^{best} \leftarrow -\infty$\;
+    \For{$k = 0, \ldots, N_\ell$}{
+      $\ell \leftarrow k / N_\ell$\;
+      $budget \leftarrow (1+r) a_j + w z_s (1-\ell) - T(w z_s (1-\ell)) + Tr$\;
+      $c_{max} \leftarrow \max(0,\; budget - \underline{a})$\;
+      \For{$m = 0, \ldots, 10$}{
+        $c \leftarrow c_{max} \cdot m/10$\;
+        $a' \leftarrow \max(budget - c,\; \underline{a})$\;
+        $EV \leftarrow \sum_{s'} \Pi(s,s') \cdot V^{n-1}_{interp}(a', s')$\;
+        $val \leftarrow u(c, \ell, G) + \beta_d \cdot EV$\;
+        \If{$val > V^{best}$}{
+          $V^{best} \leftarrow val$; \quad $c^* \leftarrow c$; \quad $\ell^* \leftarrow \ell$\;
+        }
+      }
+    }
+    $V^n(a_j, z_s) \leftarrow V^{best}$\;
+  }
+  \If{$\|V^n - V^{n-1}\|_\infty < 10^{-6}$}{
+    \textbf{break}\;
+  }
+}
+Interpolate $(c^*, \ell^*)$ at each agent's actual $(a_{it}, z_{it})$\;
+\end{algorithm}
+
+\begin{remark}[Homogeneous Preference Speedup]
+When all agents share identical utility parameters (auto-detected at runtime), the VFI in \Cref{alg:vfi} is solved once, producing policy grids $c^*(a, z)$ and $\ell^*(a, z)$. Each agent's decision is then obtained by interpolation at their state $(a_{it}, z_{it})$, reducing the computational cost from $O(N)$ VFI solves to one.
+\end{remark}
+
+
+\subsection{Market Clearing via Tatonnement}\label{sec:tatonnement}
+
+Equilibrium prices $(w_t, r_t)$ are found via a tatonnement (price adjustment) algorithm.
+
+\begin{algorithm}[t]
+\caption{Tatonnement Market Clearing}\label{alg:tatonnement}
+\KwIn{Households, firms, aggregate TFP $A_t$, config}
+\KwOut{Equilibrium prices $(w^*, r^*)$}
+Compute aggregate supply: $L^s = \sum_i z_i (1-\ell_i)$, $K^s = \sum_i a_i$\;
+Initialize $(w, r)$ from previous period or analytical guess\;
+\For{$iter = 1, \ldots, N_{tat}$}{
+  Compute firm demands $(L^d, K^d)$ from FOCs \eqref{eq:foc_labor}\;
+  $\Delta_L \leftarrow L^d - L^s$; \quad $\Delta_K \leftarrow K^d - K^s$\;
+  $\epsilon \leftarrow \sqrt{\Delta_L^2 + \Delta_K^2}$\;
+  \If{$|\Delta_L| < \epsilon_{tat}$ \textbf{and} $|\Delta_K| < \epsilon_{tat}$}{
+    \Return $(w, r)$\;
+  }
+  $w \leftarrow w + \eta \cdot \Delta_L / L^s$\;
+  $r \leftarrow r + \eta \cdot \Delta_K / K^s$\;
+  Clamp $w \geq 10^{-6}$, $r \geq -0.99$\;
+}
+\Return best $(w, r)$ found\;
+\end{algorithm}
+
+When no explicit firms exist, the model uses a representative firm and computes prices analytically from Cobb-Douglas FOCs:
+\begin{equation}\label{eq:analytical_prices}
+  w = (1-\alpha) \frac{Y}{L^s}, \qquad r = \alpha \frac{Y}{K^s} - \delta, \qquad Y = A_t (K^s)^\alpha (L^s)^{1-\alpha}.
+\end{equation}
+
+
+\subsection{Entrepreneurial Decision Solver}\label{sec:entre_solver}
+
+The entrepreneurial solver computes the truncated PDV of expected profits \eqref{eq:firm_value} by forward simulation of the ability Markov chain. Starting from a probability distribution concentrated at the agent's current ability state, the solver:
+\begin{enumerate}
+  \item Computes expected ability at each horizon step $\tau$ using the transition matrix;
+  \item Evaluates optimal labor demand via \eqref{eq:optimal_labor};
+  \item Computes profit via \eqref{eq:firm_profit};
+  \item Discounts and sums to obtain $V(e, K)$.
+\end{enumerate}
+Optimal capital $K^*$ is found by grid search over 20 equally-spaced points in $[\underline{K}, a_{it} - F]$.
+
+
+\subsection{Period Lifecycle}\label{sec:lifecycle}
+
+Each period $t$ executes nine steps in a fixed order, guaranteeing determinism.
+
+\begin{algorithm}[t]
+\caption{Period Lifecycle (9-Step Algorithm)}\label{alg:lifecycle}
+\KwIn{Previous period state $(t-1)$, configuration}
+\KwOut{Updated period state $t$}
+\textbf{Step 1: Draw shocks.} Transition productivity and ability via Markov chains; draw aggregate TFP from AR(1); optionally draw preference shocks.\;
+\textbf{Step 2: Clear markets.} Find equilibrium $(w_t, r_t)$ via tatonnement (\Cref{alg:tatonnement}).\;
+\textbf{Step 3: Collect decisions.} Solve household Bellman via VFI (\Cref{alg:vfi}); solve entrepreneurial entry/exit (\Cref{sec:entre_solver}).\;
+\textbf{Step 4: Validate constraints.} Project decisions onto feasible set: clamp $\ell \in [0,1]$, $c \leq budget - \underline{a}$, $a' \geq \underline{a}$.\;
+\textbf{Step 5: Execute production.} Compute firm outputs via \eqref{eq:firm_production}; distribute income via \eqref{eq:firm_profit}; apply R\&D shocks via \eqref{eq:rd_prob}; create/liquidate firms.\;
+\textbf{Step 6: Enforce constitution.} Apply tax rules, compute public goods, distribute transfers, apply regulations.\;
+\textbf{Step 7: Process governance.} Collect proposals, validate, vote, amend constitution (at proposal-interval periods).\;
+\textbf{Step 8: Update states.} Apply DSGE-HA budget constraint: $a' = (1+r)a + y + \pi - c - T + Tr$; compute realized utility $u(c, \ell, G)$.\;
+\textbf{Step 9: Observe.} Compute Gini, Pareto efficiency, aggregates (Y, C, I), wealth quantiles, welfare, firm stats; append to history.\;
+\end{algorithm}
+
+\begin{remark}[State Immutability]
+Steps 1--9 operate on deep copies of the previous period's state. Agents never mutate global state directly; they return decisions that are validated and applied atomically in Step~8. This design prevents race conditions and ensures determinism (PROP-001).
+\end{remark}
+
+
+% =============================================================================
+\section{LLM-Augmented Political Decisions}\label{sec:llm}
+% =============================================================================
+
+\subsection{Motivation}\label{sec:llm_motivation}
+
+The model distinguishes between two types of decisions. \emph{Economic decisions}---consumption, savings, labor supply---have well-defined objective functions (the Bellman equation) and can be solved numerically to arbitrary precision. \emph{Political decisions}---what tax rate to propose, whether to add a means-tested transfer, how to vote on a minimum wage---are fundamentally open-ended. The space of possible proposals is large, the evaluation criteria are multi-dimensional (personal utility, ideological values, societal welfare), and the strategic interactions are complex.
+
+This asymmetry motivates our design: analytical optimization for economics, LLM-augmented bounded rationality for politics. The LLM acts not as an optimizer but as a model of deliberative decision-making under genuine uncertainty about institutional design.
+
+
+\subsection{Architecture}\label{sec:llm_arch}
+
+The LLM decision engine operates through a five-stage pipeline:
+
+\begin{enumerate}
+  \item \textbf{Context construction.} For each agent, build a structured JSON context containing: (a) personal state (wealth, productivity, role, utility parameters, value vector); (b) economic conditions (wage, interest rate, aggregate output); (c) current constitution (all rules and their parameters); (d) recent history (Gini trends, welfare changes, proposal outcomes); (e) a rule-type guide with examples and parameter descriptions.
+
+  \item \textbf{Cache lookup.} Compute a hash of each agent's context. If an identical context was seen earlier in the simulation, reuse the cached response. This avoids redundant API calls when multiple agents face similar conditions.
+
+  \item \textbf{Batched API calls.} Uncached contexts are batched (default batch size: 10) and sent to the LLM provider with structured output schemas. The LLM returns JSON conforming to the \texttt{PoliticalDecision} schema, which includes an optional proposal and a vote map.
+
+  \item \textbf{Schema validation.} Each LLM response is validated against a Pydantic model. Responses that fail validation trigger the fallback path.
+
+  \item \textbf{Fallback.} On API failure, timeout, or validation error, the agent defaults to a null political decision (no proposal, no votes), ensuring the simulation always progresses.
+\end{enumerate}
+
+
+\subsection{Information Structure}\label{sec:llm_info}
+
+The political context provided to the LLM is richer than the economic context, reflecting the complexity of institutional design:
+
+\begin{itemize}
+  \item \textbf{Societal conditions:} Gini coefficient, mean and median wealth, wealth quantiles (p10, p25, p50, p75, p90), unemployment rate, number of active firms, aggregate output, social welfare.
+
+  \item \textbf{Recent history with trends:} The last 3--5 observation entries, each annotated with trend descriptors (``Inequality decreased,'' ``Welfare improved,'' etc.) computed by comparing consecutive observations.
+
+  \item \textbf{Recent proposal outcomes:} The last 20 vote outcomes, including whether proposals were passed, voted down, or rejected at validation, with vote counts. This enables the LLM to learn from prior political dynamics and avoid repeating failed approaches.
+
+  \item \textbf{Rule-type guide:} A structured dictionary describing each of the eight rule types, their valid parameters, and example proposals. This serves as an instruction manual for the LLM's institutional design.
+\end{itemize}
+
+
+\subsection{Determinism and Reproducibility}\label{sec:llm_determinism}
+
+Several design choices ensure reproducibility:
+\begin{itemize}
+  \item LLM temperature is set to $0$, producing deterministic outputs for identical inputs.
+  \item All randomness in agent selection, proposal ordering, and tie-breaking flows through a single seeded RNG.
+  \item The cache maps contexts to responses deterministically.
+\end{itemize}
+
+
+\subsection{Benchmark Mode}\label{sec:benchmark}
+
+The model supports a \emph{benchmark mode} that disables LLM calls entirely. In benchmark mode:
+\begin{itemize}
+  \item Economic decisions are computed by the VFI solver.
+  \item Entrepreneurial decisions are computed by the analytical solver.
+  \item No governance changes occur (the constitution remains at its initial values).
+\end{itemize}
+This enables controlled experiments that isolate the effect of endogenous governance by comparing LLM-mode and benchmark-mode simulations with the same seed and configuration.
+
+
+% =============================================================================
+\section{Calibration}\label{sec:calibration}
+% =============================================================================
+
+\Cref{tab:calibration} reports the baseline calibration. Parameter values are drawn from standard sources in the quantitative macro literature.
+
+\begin{table}[t]
+\centering
+\caption{Baseline Calibration}\label{tab:calibration}
+\begin{tabular}{@{}llcl@{}}
+\toprule
+\textbf{Parameter} & \textbf{Symbol} & \textbf{Value} & \textbf{Description} \\
+\midrule
+\multicolumn{4}{l}{\textit{Core}} \\
+Number of agents & $N$ & 50 & Population size \\
+Time horizon & $T$ & 100 & Number of periods \\
+RNG seed & --- & 42 & Reproducibility \\
+\midrule
+\multicolumn{4}{l}{\textit{Production}} \\
+Capital share & $\alpha$ & 0.33 & Cobb-Douglas \\
+Depreciation rate & $\delta$ & 0.10 & Annual \\
+Aggregate TFP (initial) & $A_0$ & 1.0 & Normalized \\
+\midrule
+\multicolumn{4}{l}{\textit{Household preferences}} \\
+Consumption weight & $\alpha_u$ & 0.40 & Cobb-Douglas utility \\
+Leisure weight & $\beta_u$ & 0.35 & Cobb-Douglas utility \\
+Public goods weight & $\gamma_u$ & 0.25 & Cobb-Douglas utility \\
+Discount factor & $\beta_d$ & 0.95 & Intertemporal \\
+Borrowing constraint & $\underline{a}$ & 0.0 & Natural borrowing limit \\
+Initial wealth mean & $\bar{a}_0$ & 100.0 & Log-normal approx \\
+Initial wealth std & $\sigma_{a_0}$ & 30.0 & --- \\
+\midrule
+\multicolumn{4}{l}{\textit{Idiosyncratic shocks}} \\
+Productivity persistence & $\rho_z$ & 0.90 & AR(1) \\
+Productivity volatility & $\sigma_z$ & 0.20 & Innovation s.d. \\
+Grid points & $N_z$ & 5 & Rouwenhorst \\
+\midrule
+\multicolumn{4}{l}{\textit{Entrepreneurial}} \\
+Ability persistence & $\rho_e$ & 0.85 & AR(1) \\
+Ability volatility & $\sigma_e$ & 0.30 & Innovation s.d. \\
+Grid points & $N_e$ & 5 & Rouwenhorst \\
+Entry cost & $F$ & 5.0 & Sunk cost \\
+Minimum capital & $\underline{K}$ & 10.0 & --- \\
+Firm value horizon & $H$ & 20 & Truncation \\
+\midrule
+\multicolumn{4}{l}{\textit{Aggregate shocks}} \\
+TFP persistence & $\rho_A$ & 0.95 & AR(1) \\
+TFP volatility & $\sigma_A$ & 0.01 & Innovation s.d. \\
+\midrule
+\multicolumn{4}{l}{\textit{R\&D}} \\
+Base success probability & $p_0$ & 0.10 & --- \\
+TFP improvement mean & $\mu_{rd}$ & 0.05 & --- \\
+TFP improvement std & $\sigma_{rd}$ & 0.02 & --- \\
+\midrule
+\multicolumn{4}{l}{\textit{Market clearing}} \\
+Max iterations & $N_{tat}$ & 100 & Tatonnement \\
+Tolerance & $\epsilon_{tat}$ & $10^{-6}$ & Convergence \\
+Step size & $\eta$ & 0.01 & Price adjustment \\
+\midrule
+\multicolumn{4}{l}{\textit{VFI}} \\
+Asset grid points & $N_a$ & 100 & Exponential spacing \\
+Leisure grid points & $N_\ell$ & 21 & Uniform \\
+Max iterations & --- & 500 & --- \\
+Convergence tolerance & $\epsilon_{VFI}$ & $10^{-6}$ & Sup-norm \\
+\midrule
+\multicolumn{4}{l}{\textit{Governance}} \\
+Proposal interval & $K_{prop}$ & 5 & Periods \\
+Observer interval & $K_{obs}$ & 5 & Periods \\
+\midrule
+\multicolumn{4}{l}{\textit{LLM}} \\
+Temperature & --- & 0.0 & Deterministic \\
+Batch size & --- & 10 & Agents per call \\
+Cache enabled & --- & Yes & --- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The capital share $\alpha = 0.33$ and depreciation rate $\delta = 0.10$ are standard in the macro literature. The productivity process parameters ($\rho_z = 0.9$, $\sigma_z = 0.2$) are in the range estimated by \citet{storesletten2004} for annual earnings. The entrepreneurial ability process is somewhat more volatile ($\sigma_e = 0.3$) and less persistent ($\rho_e = 0.85$), reflecting the higher turnover in business outcomes relative to labor earnings. The discount factor $\beta_d = 0.95$ and the Cobb-Douglas utility weights ($\alpha_u = 0.4$, $\beta_u = 0.35$, $\gamma_u = 0.25$) are within the range of estimated preferences in the literature on labor supply and public goods valuation.
+
+
+% =============================================================================
+\section{Discussion}\label{sec:discussion}
+% =============================================================================
+
+\subsection{Wealth Inequality Dynamics}
+
+The model generates endogenous wealth inequality through three channels. First, idiosyncratic productivity shocks create earnings inequality among workers. Second, entrepreneurial returns amplify the right tail of the wealth distribution, as successful entrepreneurs earn profits in addition to labor income. Third, the constitutional feedback loop creates a political economy of inequality: if wealthier agents successfully block redistributive proposals (exploiting their economic position to influence governance outcomes), inequality may be self-reinforcing.
+
+The Gini coefficient is computed at each observation interval as
+\begin{equation}\label{eq:gini}
+  G = \frac{2 \sum_{i=1}^{N} i \cdot a_{(i)} - (N+1) \sum_{i=1}^{N} a_{(i)}}{N \sum_{i=1}^{N} a_{(i)}},
+\end{equation}
+where $a_{(1)} \leq a_{(2)} \leq \cdots \leq a_{(N)}$ are ordered wealth levels.
+
+
+\subsection{Occupational Choice Mechanisms}
+
+The entry/exit dynamics are driven by the interaction of three factors:
+\begin{enumerate}
+  \item \textbf{Ability:} High-ability agents have higher expected firm values, making entry more attractive.
+  \item \textbf{Wealth:} The minimum capital constraint $\underline{K}$ and entry cost $F$ create a wealth barrier to entrepreneurship. Agents must satisfy $a_{it} \geq \underline{K} + F$ to enter.
+  \item \textbf{Prices:} Factor prices $(w, r)$ affect both the opportunity cost of entrepreneurship (the forgone return $a \cdot r$ on savings) and the profitability of firms (through labor costs and capital costs).
+\end{enumerate}
+
+The interaction of these factors generates rich dynamics. Rising wages reduce firm profitability, potentially triggering exit. A constitutional increase in tax rates reduces after-tax profits but may also reduce the opportunity cost of capital if it lowers interest rates through general equilibrium effects.
+
+
+\subsection{Constitutional Evolution}
+
+In LLM-augmented mode, the constitution evolves as agents observe economic outcomes and propose institutional changes. Several patterns emerge:
+\begin{itemize}
+  \item \textbf{Tax ratchet:} If inequality is high, equality-preferring agents may propose higher taxes. If the tax rate becomes too high, liberty-preferring agents propose reductions. This creates oscillatory dynamics around an interior equilibrium.
+  \item \textbf{Transfer design:} Agents may initially propose equal-share transfers, then shift to means-tested transfers as they observe that flat transfers have limited equalizing effect.
+  \item \textbf{Voting rule changes:} Constitutional amendments to the voting threshold itself create meta-governance dynamics---agents may try to entrench favorable rules by raising the threshold required to change them.
+\end{itemize}
+
+
+\subsection{LLM vs.\ Benchmark Comparison}
+
+Comparing LLM-mode and benchmark-mode simulations isolates the effect of endogenous governance. In benchmark mode, the constitution remains at its initial values (zero taxes, flat transfers, majority voting), and all variation in outcomes comes from economic shocks and occupational dynamics. In LLM mode, constitutional changes introduce an additional source of dynamics that can either amplify or dampen economic fluctuations.
+
+The welfare comparison is measured by cumulative discounted social welfare:
+\begin{equation}\label{eq:cumulative_welfare}
+  W_T = \sum_{t=0}^{T} \bar{\beta}^t \sum_{i=1}^{N} u(c_{it}, \ell_{it}, G_t),
+\end{equation}
+where $\bar{\beta}$ is the average discount factor across agents.
+
+
+\subsection{Pareto Efficiency}
+
+The Pareto efficiency score estimates the fraction of agent pairs for which no improving transfer exists. For each ordered pair $(i, j)$ with $a_i \geq a_j$, we test whether a small transfer $\Delta = 1.0$ from $i$ to $j$ would improve $j$'s utility without reducing $i$'s:
+\begin{equation}\label{eq:pareto_test}
+  u_j(c_j + \Delta) > u_j(c_j) \quad \text{and} \quad u_i(c_i - \Delta) \geq u_i(c_i).
+\end{equation}
+The Pareto score is $1$ minus the fraction of pairs where such an improvement exists.
+
+
+% =============================================================================
+\section{Conclusion}\label{sec:conclusion}
+% =============================================================================
+
+We have developed a heterogeneous-agent model in which governance institutions are fully endogenous. Agents with heterogeneous productivity, ability, and preferences simultaneously make economic decisions (consumption, savings, labor, entrepreneurship) and political decisions (proposals, votes on constitutional rules). The economic and political layers are tightly coupled: constitutional rules determine fiscal policy, which enters budget constraints and affects equilibrium prices, which in turn shape the political preferences that generate new proposals.
+
+The computational framework combines value function iteration for economic optimization with LLM-augmented decision-making for political deliberation. This asymmetric design reflects a genuine asymmetry in the underlying problems: economic optimization has well-defined structure (the Bellman equation), while institutional design is genuinely open-ended.
+
+Several extensions merit future investigation. First, the model could incorporate a richer set of agent interactions, including coalition formation and bargaining. Second, the LLM's ``preferences'' could be calibrated against survey data on political attitudes. Third, the model could be scaled to larger populations using the Krusell-Smith algorithm for tracking the wealth distribution. Fourth, the constitutional framework could be extended to include judicial review and enforcement uncertainty.
+
+
+% =============================================================================
+% Appendices
+% =============================================================================
+\appendix
+
+\section{Rouwenhorst Method: Detailed Construction}\label{app:rouwenhorst}
+
+We provide the full algorithm for the Rouwenhorst discretization of an AR(1) process $\log x_t = \rho \log x_{t-1} + \varepsilon_t$ with $\varepsilon_t \sim \mathcal{N}(0, \sigma^2)$.
+
+\textbf{Input:} Persistence $\rho \in (0, 1)$, innovation volatility $\sigma > 0$, number of grid points $n \geq 2$.
+
+\textbf{Output:} Grid values $\calS = \{s_1, \ldots, s_n\}$ in levels, transition matrix $\Pi \in \R^{n \times n}$.
+
+\begin{enumerate}
+  \item Unconditional standard deviation: $\sigma_x = \sigma / \sqrt{1 - \rho^2}$.
+  \item Grid bounds in logs: $z_{max} = \sigma_x \sqrt{n-1}$.
+  \item Log grid: $z_j = -z_{max} + (j-1) \cdot 2z_{max}/(n-1)$ for $j = 1, \ldots, n$.
+  \item Transition parameter: $p = (1 + \rho)/2$.
+  \item Base matrix ($n = 2$):
+  \[
+    \Pi_2 = \begin{pmatrix} p & 1-p \\ 1-p & p \end{pmatrix}.
+  \]
+  \item Recursive construction. For $m = 3, \ldots, n$, define the $(m \times m)$ matrix $\widetilde{\Pi}_m$ by embedding $\Pi_{m-1}$ in four quadrants (see \eqref{eq:rouwenhorst_recursion}), then normalize rows to sum to 1.
+  \item Level grid: $s_j = \exp(z_j)$ for $j = 1, \ldots, n$.
+\end{enumerate}
+
+The stationary distribution $\pi^*$ satisfying $\pi^* = \pi^* \Pi$ is computed by initializing $\pi^{(0)} = (1/n, \ldots, 1/n)$ and iterating $\pi^{(k+1)} = \pi^{(k)} \Pi$ until convergence.
+
+
+\section{VFI Convergence Properties}\label{app:vfi}
+
+The VFI algorithm inherits convergence guarantees from the contraction mapping theorem. Define the Bellman operator $\mathcal{T}$:
+\begin{equation}
+  (\mathcal{T}V)(a, z) = \max_{c, \ell} \left\{ u(c, \ell, G) + \beta_d \sum_{z'} \Pi(z, z') V(a', z') \right\}.
+\end{equation}
+
+Under our assumptions (bounded utility, $\beta_d < 1$, compact choice set), $\mathcal{T}$ is a contraction mapping with modulus $\beta_d$ in the sup-norm. By the Banach fixed-point theorem, $\mathcal{T}$ has a unique fixed point $V^*$ and the sequence $V^n = \mathcal{T}^n V^0$ converges to $V^*$ at rate $\beta_d^n$.
+
+In practice, with $\beta_d = 0.95$, the error after $n$ iterations is bounded by $\beta_d^n / (1 - \beta_d) \cdot \|V^1 - V^0\|_\infty$. For our tolerance of $10^{-6}$, this typically requires 150--300 iterations depending on the state.
+
+The discretization introduces approximation error from three sources:
+\begin{enumerate}
+  \item \textbf{Asset grid:} The exponential spacing provides higher resolution near $\underline{a}$ where marginal utility is highest. Linear interpolation between grid points introduces $O(\Delta a^2)$ error.
+  \item \textbf{Leisure grid:} The uniform 21-point grid introduces at most $O(1/N_\ell)$ error in the leisure choice.
+  \item \textbf{Consumption grid:} The 11-point inner grid for consumption optimization provides a coarse approximation that could be refined at the cost of computation time.
+\end{enumerate}
+
+
+\section{Full Parameter Table}\label{app:params}
+
+\Cref{tab:full_params} provides the complete parameter specification including derived and optional parameters.
+
+\begin{table}[t]
+\centering
+\caption{Complete Parameter Specification}\label{tab:full_params}
+\begin{tabular}{@{}llcl@{}}
+\toprule
+\textbf{Module} & \textbf{Parameter} & \textbf{Default} & \textbf{Constraint} \\
+\midrule
+Core & \texttt{num\_agents} & 50 & $\geq 20$ \\
+Core & \texttt{max\_periods} & 100 & $\geq 1$ \\
+Core & \texttt{seed} & 42 & integer \\
+\midrule
+Shocks & \texttt{rho\_z} & 0.9 & $(0, 1)$ \\
+Shocks & \texttt{sigma\_z} & 0.2 & $> 0$ \\
+Shocks & \texttt{num\_z\_states} & 5 & $[2, 50]$ \\
+Shocks & \texttt{rho\_a} & 0.95 & $(0, 1)$ \\
+Shocks & \texttt{sigma\_a} & 0.01 & $> 0$ \\
+Shocks & \texttt{rho\_e} & 0.85 & $(0, 1)$ \\
+Shocks & \texttt{sigma\_e} & 0.3 & $> 0$ \\
+Shocks & \texttt{num\_e\_states} & 5 & $[2, 50]$ \\
+Shocks & \texttt{enable\_preference\_shocks} & False & boolean \\
+\midrule
+Production & \texttt{alpha} & 0.33 & $(0, 1)$ \\
+Production & \texttt{delta} & 0.1 & $(0, 1)$ \\
+Production & \texttt{min\_firm\_capital} & 10.0 & $> 0$ \\
+\midrule
+Entrepreneurial & \texttt{firm\_entry\_cost} & 5.0 & $> 0$ \\
+Entrepreneurial & \texttt{firm\_value\_horizon} & 20 & $\geq 1$ \\
+\midrule
+Household & \texttt{a\_min} & 0.0 & $\geq 0$ \\
+Household & \texttt{initial\_wealth\_mean} & 100.0 & $> 0$ \\
+Household & \texttt{initial\_wealth\_std} & 30.0 & $\geq 0$ \\
+Household & \texttt{homogeneous\_preferences} & True & boolean \\
+Household & \texttt{utility\_alpha} & 0.4 & $(0, 1)$ \\
+Household & \texttt{utility\_beta} & 0.35 & $(0, 1)$ \\
+Household & \texttt{utility\_gamma} & 0.25 & $(0, 1)$ \\
+Household & \texttt{utility\_beta\_discount} & 0.95 & $(0, 1)$ \\
+\midrule
+Market clearing & \texttt{tatonnement\_max\_iter} & 100 & $\geq 1$ \\
+Market clearing & \texttt{tatonnement\_tolerance} & $10^{-6}$ & $> 0$ \\
+Market clearing & \texttt{tatonnement\_step\_size} & 0.01 & $> 0$ \\
+\midrule
+Intervals & \texttt{proposal\_interval} & 5 & $\geq 1$ \\
+Intervals & \texttt{observer\_interval} & 5 & $\geq 1$ \\
+\midrule
+LLM & \texttt{use\_llm} & True & boolean \\
+LLM & \texttt{llm\_temperature} & 0.0 & $[0, 2]$ \\
+LLM & \texttt{llm\_batch\_size} & 10 & $\geq 1$ \\
+LLM & \texttt{llm\_cache\_enabled} & True & boolean \\
+LLM & \texttt{benchmark\_mode} & False & boolean \\
+\midrule
+R\&D & \texttt{rd\_success\_base\_prob} & 0.1 & $[0, 1]$ \\
+R\&D & \texttt{rd\_tfp\_improvement\_mean} & 0.05 & $> 0$ \\
+R\&D & \texttt{rd\_tfp\_improvement\_std} & 0.02 & $\geq 0$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+
+\section{Sandbox Specification}\label{app:sandbox}
+
+Constitutional rules may include enforcement code---Python expressions that are evaluated in a sandboxed environment to compute taxes, transfers, or other policy outcomes. The sandbox imposes strict safety constraints:
+
+\textbf{Allowed AST nodes.} Only the following Python AST node types are permitted:
+\begin{itemize}
+  \item Literals (\texttt{Constant})
+  \item Arithmetic operators (\texttt{Add}, \texttt{Sub}, \texttt{Mult}, \texttt{Div}, \texttt{FloorDiv}, \texttt{Mod}, \texttt{Pow})
+  \item Unary operators (\texttt{USub}, \texttt{UAdd})
+  \item Comparison operators (\texttt{Eq}, \texttt{NotEq}, \texttt{Lt}, \texttt{LtE}, \texttt{Gt}, \texttt{GtE})
+  \item Boolean operators (\texttt{And}, \texttt{Or}, \texttt{Not})
+  \item Variable references (\texttt{Name})
+  \item Function calls (restricted to safe builtins)
+  \item Conditional expressions (\texttt{IfExp})
+  \item Simple assignments (\texttt{Assign})
+  \item Container constructors (\texttt{Tuple}, \texttt{List}, \texttt{Dict})
+\end{itemize}
+
+\textbf{Disallowed constructs.} Imports, function/class definitions, attribute access, comprehensions, lambda expressions, \texttt{exec}, \texttt{eval}, and all forms of I/O are blocked at the AST level.
+
+\textbf{Available builtins.} The sandbox provides a restricted set of built-in functions: \texttt{abs}, \texttt{min}, \texttt{max}, \texttt{round}, \texttt{sum}, \texttt{len}, plus mathematical functions \texttt{sqrt}, \texttt{log}, \texttt{exp}, and \texttt{pow}.
+
+\textbf{Available variables.} Enforcement code for tax rules receives \texttt{income}, \texttt{rate}, and \texttt{wealth}. Transfer rules receive \texttt{revenue} and \texttt{num\_agents}. Public goods rules receive \texttt{fraction\_of\_revenue} and \texttt{revenue}.
+
+This design ensures that constitutional rules, even when proposed by LLM agents, cannot compromise the simulation's integrity through arbitrary code execution.
+
+
+% =============================================================================
+% Bibliography
+% =============================================================================
+\bibliographystyle{plainnat}
+
+\begin{thebibliography}{20}
+
+\bibitem[Acemoglu(2005)]{acemoglu2005}
+Acemoglu, D. (2005).
+\newblock Politics and economics in weak and strong states.
+\newblock \textit{Journal of Monetary Economics}, 52(7):1199--1226.
+
+\bibitem[Acemoglu and Robinson(2006)]{acemoglurobinson2006}
+Acemoglu, D. and Robinson, J.~A. (2006).
+\newblock \textit{Economic Origins of Dictatorship and Democracy}.
+\newblock Cambridge University Press.
+
+\bibitem[Aiyagari(1994)]{aiyagari1994}
+Aiyagari, S.~R. (1994).
+\newblock Uninsured idiosyncratic risk and aggregate saving.
+\newblock \textit{Quarterly Journal of Economics}, 109(3):659--684.
+
+\bibitem[Bewley(1977)]{bewley1977}
+Bewley, T. (1977).
+\newblock The permanent income hypothesis: A theoretical formulation.
+\newblock \textit{Journal of Economic Theory}, 16(2):252--292.
+
+\bibitem[Cagetti and De~Nardi(2006)]{cagettideNardi2006}
+Cagetti, M. and De~Nardi, M. (2006).
+\newblock Entrepreneurship, frictions, and wealth.
+\newblock \textit{Journal of Political Economy}, 114(5):835--870.
+
+\bibitem[Huggett(1993)]{huggett1993}
+Huggett, M. (1993).
+\newblock The risk-free rate in heterogeneous-agent incomplete-insurance economies.
+\newblock \textit{Journal of Economic Dynamics and Control}, 17(5):953--969.
+
+\bibitem[Kopecky and Suen(2010)]{kopeckysuen2010}
+Kopecky, K.~A. and Suen, R.~M. (2010).
+\newblock Finite state {M}arkov-chain approximations to highly persistent processes.
+\newblock \textit{Review of Economic Dynamics}, 13(3):701--714.
+
+\bibitem[Krusell and Smith(1998)]{krusellsmith1998}
+Krusell, P. and Smith, A.~A. (1998).
+\newblock Income and wealth heterogeneity in the macroeconomy.
+\newblock \textit{Journal of Political Economy}, 106(5):867--896.
+
+\bibitem[Storesletten et~al.(2004)]{storesletten2004}
+Storesletten, K., Telmer, C.~I., and Yaron, A. (2004).
+\newblock Consumption and risk sharing over the life cycle.
+\newblock \textit{Journal of Monetary Economics}, 51(3):609--633.
+
+\end{thebibliography}
+
+% =============================================================================
+\end{document}
+% =============================================================================

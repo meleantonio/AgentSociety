@@ -28,3 +28,8 @@ requirements-dev.lock
 htmlcov/
 .coverage
 .coverage.*
+docs/model_paper.log
+docs/model_paper.out
+docs/model_paper.synctex.gz
+docs/model_paper.toc
+docs/model_paper.aux
