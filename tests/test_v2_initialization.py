@@ -396,3 +396,42 @@ class TestHomogeneousHouseholds:
             assert h1.productivity == h2.productivity
             assert h1.utility_params == h2.utility_params
             assert h1.value_vector == h2.value_vector
+
+
+# ============================================================================
+# Entrepreneurial ability initialization tests
+# ============================================================================
+
+
+class TestEntrepreneurialAbilityInitialization:
+    def test_initial_entrepreneurial_ability(self) -> None:
+        """Every household has entrepreneurial_ability > 0 and valid index."""
+        config = SimulationConfigV2(num_agents=30, seed=42)
+        ps, _ = initialize_simulation_v2(config)
+        for h in ps.households:
+            assert h.entrepreneurial_ability > 0, (
+                f"Agent {h.id} has non-positive entrepreneurial_ability: "
+                f"{h.entrepreneurial_ability}"
+            )
+            assert h.entrepreneurial_ability_index >= 0
+            assert h.entrepreneurial_ability_index < config.num_e_states
+
+    def test_ability_heterogeneity(self) -> None:
+        """With >= 20 agents, not all should have identical ability (stochastic draw)."""
+        config = SimulationConfigV2(num_agents=30, seed=42)
+        ps, _ = initialize_simulation_v2(config)
+        abilities = {h.entrepreneurial_ability for h in ps.households}
+        assert len(abilities) > 1, (
+            "All agents have identical entrepreneurial_ability; "
+            "expected variation from stationary distribution draws"
+        )
+
+    def test_shocks_contain_ability_grid(self) -> None:
+        """Shocks have ability_grid and ability_transition_matrix with correct dimensions."""
+        config = SimulationConfigV2(num_agents=20, seed=42)
+        ps, _ = initialize_simulation_v2(config)
+
+        assert len(ps.shocks.ability_grid) == config.num_e_states
+        assert len(ps.shocks.ability_transition_matrix) == config.num_e_states
+        for row in ps.shocks.ability_transition_matrix:
+            assert len(row) == config.num_e_states

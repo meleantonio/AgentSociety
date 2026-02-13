@@ -174,6 +174,14 @@ class MockProvider:
                 leisure=0.3,
             )
         if schema is EntrepreneurialDecision:
+            # Sometimes create firms (10% chance) for more realistic integration tests
+            if self._rng.random() < 0.1:
+                return EntrepreneurialDecision(
+                    create_firm=True,
+                    capital_investment=20.0,
+                    labor_demand=5.0,
+                    rd_spend=1.0,
+                )
             return EntrepreneurialDecision()
         if schema is PoliticalDecision:
             return PoliticalDecision()

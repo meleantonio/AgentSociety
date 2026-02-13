@@ -99,10 +99,36 @@ _ENTREPRENEURIAL_SYSTEM_PROMPT = (
 )
 
 _POLITICAL_SYSTEM_PROMPT = (
-    "You are a citizen-agent participating in constitutional governance. "
-    "You may propose changes to the constitution (add, modify, or remove rules) "
-    "and vote on existing proposals. Consider the current constitution, "
-    "economic conditions, and your values when making decisions."
+    "You are a citizen-agent in a constitutional democracy simulation. "
+    "Your goal is to propose and vote on rules that improve societal welfare "
+    "according to your values (equality vs liberty preference).\n\n"
+    "AVAILABLE RULE TYPES:\n"
+    "- tax_schedule: Tax rates and structure. Parameters: rate (0-1). "
+    "enforcement_code variables: income, rate, wealth.\n"
+    "- transfer_program: Redistribution method. Parameters: method "
+    "('equal_share' or 'means_tested').\n"
+    "- public_goods: Fraction of revenue for public goods. Parameters: "
+    "fraction (0-1).\n"
+    "- market_regulation: Market rules. Parameters vary (e.g., minimum_wage).\n"
+    "- firm_regulation: Firm constraints. Parameters vary (e.g., max_firm_size).\n"
+    "- voting_procedure: Voting thresholds. Parameters: threshold (0-1).\n"
+    "- property_rights: Property regime rules.\n"
+    "- custom: Any rule with custom enforcement_code. Sandbox functions: "
+    "abs, min, max, sqrt, log, exp. Variables: income, rate, wealth.\n\n"
+    "HOW TO PROPOSE:\n"
+    "- action: 'add' (new rule), 'modify' (change existing), or 'remove'\n"
+    "- rule_name: Identifier for the rule\n"
+    "- rule_type: One of the types above\n"
+    "- parameters: Dict of parameter values\n"
+    "- enforcement_code: Optional Python expression for custom logic\n\n"
+    "HOW TO VOTE:\n"
+    "- Consider your values: high equality preference -> favor redistribution; "
+    "high liberty preference -> favor low taxes and free markets\n"
+    "- Consider how the rule affects you personally and society overall\n"
+    "- Review the societal conditions (Gini, unemployment, output) to identify problems\n"
+    "- Review recent proposal outcomes to avoid repeating rejected approaches\n\n"
+    "Respond with a PoliticalDecision containing an optional proposal and votes "
+    "on existing rules."
 )
 
 
@@ -295,6 +321,8 @@ class LLMDecisionEngine:
         households: list[HouseholdState],
         constitution: ConstitutionV2,
         market: MarketState,
+        history: list | None = None,
+        recent_outcomes: list[dict] | None = None,
     ) -> dict[str, PoliticalDecision]:
         """Collect political decisions (proposals and votes) from all agents.
 
@@ -302,13 +330,15 @@ class LLMDecisionEngine:
             households: All household agents.
             constitution: Active constitutional rules.
             market: Current market equilibrium.
+            history: Recent HistoryEntryV2 entries (last 3-5).
+            recent_outcomes: Recent proposal outcomes (votes + rejections).
 
         Returns:
             Mapping from agent ID to PoliticalDecision.
         """
         contexts: dict[str, dict[str, Any]] = {}
         for h in households:
-            ctx = self._build_context(h, market, constitution, "")
+            ctx = self._build_political_context(h, market, constitution, history, recent_outcomes)
             # Add voting-specific context
             ctx["active_voting_rule"] = constitution.voting_rule
             rule = constitution.get_active_voting_rule()
@@ -447,6 +477,230 @@ class LLMDecisionEngine:
             "constitution": constitution_ctx,
             "history_summary": history_ctx,
             "messages": messages_ctx,
+        }
+
+    # -------------------------------------------------------------------
+    # Internal: political context building
+    # -------------------------------------------------------------------
+
+    def _build_political_context(
+        self,
+        agent: HouseholdState,
+        market: MarketState,
+        constitution: ConstitutionV2,
+        history: list | None = None,
+        recent_outcomes: list[dict] | None = None,
+    ) -> dict[str, Any]:
+        """Build enriched context for political decisions.
+
+        Extends _build_context with societal conditions, history summary,
+        rule type guide, and recent proposal outcomes.
+
+        Args:
+            agent: The household agent state.
+            market: Current market equilibrium.
+            constitution: Active constitutional rules.
+            history: Recent HistoryEntryV2 entries (last 3-5).
+            recent_outcomes: Recent proposal outcomes (votes + rejections).
+
+        Returns:
+            Enriched context dict for political LLM prompts.
+        """
+        ctx = self._build_context(agent, market, constitution, "")
+
+        # Societal conditions from most recent history entry
+        ctx["societal_conditions"] = self._extract_societal_conditions(market, history)
+
+        # Recent history summary
+        ctx["recent_history"] = self._build_history_summary(history)
+
+        # Rule type guide
+        ctx["rule_type_guide"] = self._build_rule_type_guide()
+
+        # Recent proposal outcomes
+        ctx["recent_proposal_outcomes"] = recent_outcomes or []
+
+        return ctx
+
+    def _build_history_summary(
+        self,
+        history: list | None,
+    ) -> list[dict[str, Any]]:
+        """Build structured summary of recent history entries.
+
+        Args:
+            history: Recent HistoryEntryV2 entries.
+
+        Returns:
+            List of summary dicts with period, gini, mean_wealth, social_welfare,
+            rule_changes, and trend description.
+        """
+        if not history:
+            return []
+
+        summaries: list[dict[str, Any]] = []
+        for i, entry in enumerate(history):
+            summary: dict[str, Any] = {
+                "period": entry.period,
+                "gini": round(entry.gini, 4),
+                "mean_wealth": round(entry.mean_wealth, 2),
+                "social_welfare": round(entry.social_welfare, 2),
+                "unemployment_rate": round(entry.unemployment_rate, 4),
+                "num_active_firms": entry.num_active_firms,
+                "rule_changes": entry.rule_changes,
+            }
+
+            # Compute trend relative to previous entry
+            if i > 0:
+                prev = history[i - 1]
+                trends: list[str] = []
+                if entry.gini < prev.gini - 0.01:
+                    trends.append("Inequality decreased")
+                elif entry.gini > prev.gini + 0.01:
+                    trends.append("Inequality increased")
+                if entry.social_welfare > prev.social_welfare:
+                    trends.append("Welfare improved")
+                elif entry.social_welfare < prev.social_welfare:
+                    trends.append("Welfare declined")
+                if entry.mean_wealth > prev.mean_wealth:
+                    trends.append("Mean wealth grew")
+                summary["trend"] = "; ".join(trends) if trends else "Stable"
+            else:
+                summary["trend"] = "First observation"
+
+            summaries.append(summary)
+
+        return summaries
+
+    def _extract_societal_conditions(
+        self,
+        market: MarketState,
+        history: list | None,
+    ) -> dict[str, Any]:
+        """Extract societal condition metrics for political context.
+
+        Sources from most recent history entry if available, otherwise from market.
+
+        Args:
+            market: Current market equilibrium.
+            history: Recent HistoryEntryV2 entries.
+
+        Returns:
+            Dict with Gini, wealth stats, unemployment, firms, output, welfare.
+        """
+        if history:
+            latest = history[-1]
+            return {
+                "gini_coefficient": round(latest.gini, 4),
+                "mean_wealth": round(latest.mean_wealth, 2),
+                "median_wealth": round(latest.median_wealth, 2),
+                "wealth_quantiles": latest.wealth_quantiles,
+                "unemployment_rate": round(latest.unemployment_rate, 4),
+                "num_active_firms": latest.num_active_firms,
+                "aggregate_output": round(latest.aggregate_output, 2),
+                "social_welfare": round(latest.social_welfare, 2),
+                "wage": round(latest.wage, 4),
+                "interest_rate": round(latest.interest_rate, 4),
+            }
+        # Fallback: use market data only
+        return {
+            "gini_coefficient": None,
+            "mean_wealth": None,
+            "median_wealth": None,
+            "wealth_quantiles": [],
+            "unemployment_rate": None,
+            "num_active_firms": 0,
+            "aggregate_output": round(market.aggregate_output, 2),
+            "social_welfare": None,
+            "wage": round(market.wage, 4),
+            "interest_rate": round(market.interest_rate, 4),
+        }
+
+    @staticmethod
+    def _build_rule_type_guide() -> dict[str, dict[str, Any]]:
+        """Build a guide describing available rule types with examples.
+
+        Returns:
+            Dict mapping rule type names to descriptions and examples.
+        """
+        return {
+            "tax_schedule": {
+                "description": (
+                    "Tax rules. Parameters: rate (0-1). "
+                    "enforcement_code vars: income, rate, wealth."
+                ),
+                "example": {
+                    "action": "modify",
+                    "rule_name": "flat_tax",
+                    "parameters": {"rate": 0.15},
+                },
+            },
+            "transfer_program": {
+                "description": (
+                    "Redistribution. Parameters: method ('equal_share' or 'means_tested')."
+                ),
+                "example": {
+                    "action": "add",
+                    "rule_name": "safety_net",
+                    "rule_type": "transfer_program",
+                    "parameters": {"method": "means_tested"},
+                },
+            },
+            "public_goods": {
+                "description": "Public goods allocation. Parameters: fraction (0-1).",
+                "example": {
+                    "action": "modify",
+                    "rule_name": "public_goods",
+                    "parameters": {"fraction": 0.3},
+                },
+            },
+            "market_regulation": {
+                "description": "Market rules like minimum wage or price controls.",
+                "example": {
+                    "action": "add",
+                    "rule_name": "min_wage",
+                    "rule_type": "market_regulation",
+                    "parameters": {"minimum_wage": 5.0},
+                },
+            },
+            "firm_regulation": {
+                "description": "Firm constraints like max size or R&D requirements.",
+                "example": {
+                    "action": "add",
+                    "rule_name": "rd_mandate",
+                    "rule_type": "firm_regulation",
+                    "parameters": {"min_rd_fraction": 0.05},
+                },
+            },
+            "voting_procedure": {
+                "description": "Voting thresholds and procedures.",
+                "example": {
+                    "action": "modify",
+                    "rule_name": "majority_vote",
+                    "parameters": {"threshold": 0.6},
+                },
+            },
+            "property_rights": {
+                "description": "Property regime and ownership rules.",
+                "example": {
+                    "action": "modify",
+                    "rule_name": "private_property",
+                    "parameters": {"regime": "private"},
+                },
+            },
+            "custom": {
+                "description": (
+                    "Any rule with custom enforcement_code. "
+                    "Sandbox functions: abs, min, max, sqrt, log, exp."
+                ),
+                "example": {
+                    "action": "add",
+                    "rule_name": "wealth_cap",
+                    "rule_type": "custom",
+                    "parameters": {"max_wealth": 500},
+                    "enforcement_code": "min(wealth, max_wealth)",
+                },
+            },
         }
 
     # -------------------------------------------------------------------

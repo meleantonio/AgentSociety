@@ -81,6 +81,21 @@ class SimulationConfigV2(BaseModel):
         default=False, description="REQ-017 optional preference shocks"
     )
 
+    # --- Entrepreneurial ---
+    rho_e: float = Field(
+        default=0.85, gt=0.0, lt=1.0, description="Entrepreneurial ability persistence"
+    )
+    sigma_e: float = Field(default=0.3, gt=0.0, description="Entrepreneurial ability volatility")
+    num_e_states: int = Field(
+        default=5, ge=2, le=50, description="Rouwenhorst grid points for ability"
+    )
+    firm_entry_cost: float = Field(
+        default=5.0, gt=0.0, description="Fixed cost to create a firm (sunk)"
+    )
+    firm_value_horizon: int = Field(
+        default=20, ge=1, description="Truncation horizon for firm PDV"
+    )
+
     # --- Production ---
     alpha: float = Field(default=0.33, gt=0.0, lt=1.0, description="Capital share in Cobb-Douglas")
     delta: float = Field(default=0.1, gt=0.0, lt=1.0, description="Depreciation rate")

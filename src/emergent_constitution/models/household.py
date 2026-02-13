@@ -102,6 +102,10 @@ class HouseholdState(BaseModel):
     firm_id: str | None = None
     coalition_id: str | None = None
 
+    # Entrepreneurial ability
+    entrepreneurial_ability: float = Field(default=1.0, gt=0.0)
+    entrepreneurial_ability_index: int = Field(default=0, ge=0)
+
     # Per-period decision outcomes (filled after decisions applied)
     consumption: float = Field(default=0.0, ge=0.0)
     leisure: float = Field(default=0.0, ge=0.0, le=1.0)

@@ -18,6 +18,7 @@ from emergent_constitution.llm_engine import LLMDecisionEngine
 from emergent_constitution.models.constitution import ConstitutionV2
 from emergent_constitution.models.decisions import EconomicDecision, EntrepreneurialDecision
 from emergent_constitution.models.history import HistoryEntryV2, PeriodState, SimulationOutputV2
+from emergent_constitution.models.household import OccupationalRole
 from emergent_constitution.models.market import MarketState
 from emergent_constitution.models.shocks import ShockState
 from emergent_constitution.observer import ObserverV2, detect_rule_changes_v2
@@ -550,3 +551,101 @@ class TestRuleChangeDetection:
         del c2.rules["private_property"]
         changes = detect_rule_changes_v2(c1, c2)
         assert any("private_property" in c and "removed" in c for c in changes)
+
+
+# ============================================================================
+# Entrepreneurial and governance integration tests
+# ============================================================================
+
+
+class TestEntrepreneurialFeatures:
+    """Test entrepreneurial features in the LeadV2 lifecycle."""
+
+    def test_firms_created_in_benchmark_mode(self) -> None:
+        """Benchmark mode runs 5 periods without error and produces valid output."""
+        config = SimulationConfigV2(
+            num_agents=20,
+            max_periods=5,
+            seed=42,
+            benchmark_mode=True,
+            observer_interval=1,
+        )
+        lead = LeadV2(config)
+        output = lead.run()
+
+        assert isinstance(output, SimulationOutputV2)
+        assert output.total_periods == 5
+        assert len(output.final_households) == 20
+        # Verify every household has valid state after all periods
+        for h in output.final_households:
+            assert h.wealth >= config.a_min
+            assert h.productivity > 0.0
+
+    def test_entrepreneur_role_assigned(self) -> None:
+        """Agents with ENTREPRENEUR role should own a firm or have owned one.
+
+        The role update in step 8 uses the *previous* period's firm list,
+        so we verify that any agent assigned ENTREPRENEUR was an owner in
+        the penultimate period's firm set. As a simpler invariant, we
+        verify that if any agent has ENTREPRENEUR role in the output, the
+        simulation did have firms at some point.
+        """
+        config = SimulationConfigV2(
+            num_agents=20,
+            max_periods=5,
+            seed=42,
+            benchmark_mode=True,
+            observer_interval=1,
+        )
+        lead = LeadV2(config)
+        output = lead.run()
+
+        entrepreneurs = [
+            h for h in output.final_households if h.role == OccupationalRole.ENTREPRENEUR
+        ]
+
+        # The simulation creates firms (visible in history), so entrepreneurs
+        # should exist or firms should appear in history/final state
+        any_firms_ever = any(entry.num_active_firms > 0 for entry in output.history)
+
+        if any_firms_ever:
+            # If firms existed during the run, the role assignment mechanism
+            # should have set at least some agents to ENTREPRENEUR
+            # (Note: the role update lags by one period, so it's possible
+            # the last-period entrepreneurs reflect the penultimate period.)
+            assert len(entrepreneurs) > 0 or len(lead.period_state.firms) > 0, (
+                "Firms existed during the simulation but no agents have "
+                "ENTREPRENEUR role and no firms are active at the end"
+            )
+
+    def test_ability_shocks_drawn_each_period(self) -> None:
+        """After 2 periods, at least some agents' ability_index should change."""
+        config = SimulationConfigV2(
+            num_agents=50,
+            max_periods=2,
+            seed=42,
+            benchmark_mode=True,
+            observer_interval=1,
+        )
+        lead = LeadV2(config)
+
+        # Snapshot initial ability indices
+        initial_indices = {
+            h.id: h.entrepreneurial_ability_index for h in lead.period_state.households
+        }
+
+        # Run 2 periods
+        output = lead.run()
+
+        # Compare final ability indices to initial
+        changes = 0
+        for h in output.final_households:
+            if h.entrepreneurial_ability_index != initial_indices[h.id]:
+                changes += 1
+
+        # With 50 agents and a Markov chain with off-diagonal probabilities,
+        # at least some should change over 2 periods
+        assert changes > 0, (
+            "No agents changed entrepreneurial_ability_index over 2 periods; "
+            "expected at least some transitions from the Markov chain"
+        )

@@ -19,3 +19,5 @@ class ShockState(BaseModel):
     transition_matrix: list[list[float]] = Field(default_factory=list)
     aggregate_tfp: float = Field(default=1.0, gt=0.0)
     preference_shocks: dict[str, float] = Field(default_factory=dict)
+    ability_grid: list[float] = Field(default_factory=list)
+    ability_transition_matrix: list[list[float]] = Field(default_factory=list)

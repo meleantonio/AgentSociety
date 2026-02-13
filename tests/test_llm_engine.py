@@ -522,3 +522,92 @@ class TestEngineInit:
         fallback = DefaultFallbackSolver()
         engine = LLMDecisionEngine(config=config, rng=rng, fallback_solver=fallback)
         assert engine._fallback is fallback
+
+
+# ---------------------------------------------------------------------------
+# Political Context Tests
+# ---------------------------------------------------------------------------
+
+
+class TestPoliticalContext:
+    """Test political context building and collect_political_decisions features."""
+
+    def test_political_context_includes_societal_conditions(
+        self,
+        engine: LLMDecisionEngine,
+        market: MarketState,
+        constitution: ConstitutionV2,
+    ) -> None:
+        """_build_political_context includes societal_conditions with expected keys."""
+        agent = _make_household()
+        ctx = engine._build_political_context(agent, market, constitution)
+        assert "societal_conditions" in ctx
+        sc = ctx["societal_conditions"]
+        # When no history is provided, gini_coefficient is None but key exists
+        assert "gini_coefficient" in sc
+        assert "aggregate_output" in sc
+        assert "wage" in sc
+
+    def test_political_context_includes_history(
+        self,
+        engine: LLMDecisionEngine,
+        households: list[HouseholdState],
+        market: MarketState,
+        constitution: ConstitutionV2,
+    ) -> None:
+        """Passing a non-None history list to collect_political_decisions works."""
+        from emergent_constitution.models.history import HistoryEntryV2
+
+        mock_history = [
+            HistoryEntryV2(
+                period=1,
+                gini=0.3,
+                aggregate_output=100.0,
+                mean_wealth=50.0,
+                median_wealth=45.0,
+                wage=1.0,
+                interest_rate=0.05,
+                social_welfare=200.0,
+                constitution_snapshot=constitution,
+            )
+        ]
+        decisions = engine.collect_political_decisions(
+            households, constitution, market, history=mock_history
+        )
+        assert len(decisions) == len(households)
+        for h in households:
+            assert h.id in decisions
+            assert isinstance(decisions[h.id], PoliticalDecision)
+
+    def test_political_context_includes_rule_guide(
+        self,
+        engine: LLMDecisionEngine,
+    ) -> None:
+        """_build_rule_type_guide returns a dict with expected rule type keys."""
+        guide = engine._build_rule_type_guide()
+        assert isinstance(guide, dict)
+        for key in ("tax_schedule", "transfer_program", "public_goods", "custom"):
+            assert key in guide, f"Expected key '{key}' in rule type guide"
+
+    def test_collect_political_decisions_accepts_outcomes(
+        self,
+        engine: LLMDecisionEngine,
+        households: list[HouseholdState],
+        market: MarketState,
+        constitution: ConstitutionV2,
+    ) -> None:
+        """collect_political_decisions accepts recent_outcomes without error."""
+        recent_outcomes = [
+            {
+                "period": 1,
+                "rule_name": "flat_tax",
+                "action": "modify",
+                "outcome": "voted_down",
+            }
+        ]
+        decisions = engine.collect_political_decisions(
+            households, constitution, market, recent_outcomes=recent_outcomes
+        )
+        assert len(decisions) == len(households)
+        for h in households:
+            assert h.id in decisions
