@@ -10,7 +10,7 @@ This project is designed to showcase Agent Teams at scale, leveraging Claude's 1
 
 ## Project Status
 
-**Implementation is complete.** All 6 requirements (REQ-001 through REQ-006) and both properties (PROP-001, PROP-002) are implemented. 186 tests, 96% coverage.
+**Implementation is complete.** All 6 requirements (REQ-001 through REQ-006) and both properties (PROP-001, PROP-002) are implemented. 977 tests passing.
 
 ### Implemented Phases
 
@@ -18,6 +18,15 @@ This project is designed to showcase Agent Teams at scale, leveraging Claude's 1
 - **Phase 2** (PR #2) — Proposals and voting: Proposal collection/validation, voting mechanisms (majority/supermajority/unanimity), citizen decision logic (rule-based). REQ-003, REQ-004, PROP-001.
 - **Phase 3** (PR #3) — Observer and output: Observer statistics (Gini, total output, Pareto), history logging. REQ-005, REQ-006.
 - **Phase 4** (PR #4) — Reporter and CLI: Markdown report generator, CLI entry point (`python -m emergent_constitution`).
+- **Phase 5** (PRs #52–#57) — DSGE-HA v2 engine: Heterogeneous-agent DSGE with entrepreneurial choice, VFI-based household optimization, market clearing, LLM-driven governance, and constitution engine.
+
+### Recent Major Changes (PR #57)
+
+- **Analytical market clearing**: Closed-form Cobb-Douglas FOC prices (`w = (1-α)Y/L`, `r = αY/K - δ`) replace tatonnement iteration — zero market-clearing error every period.
+- **Utility-based occupational choice**: Entrepreneurial entry/exit uses lifetime-utility comparison (worker vs entrepreneur value) with closed-form infinite-horizon firm value via stationary distribution of the ability Markov chain.
+- **Vectorized VFI**: NumPy-backed value function iteration with policy cache keyed on market parameters.
+- **Benchmark-mode governance**: `citizen_v2` module provides rule-based proposal/voting for v2 benchmark simulations.
+- **Default constitution**: 10% flat tax (was 0%), progressive transfers supported.
 
 ### Spec Documents
 
@@ -74,18 +83,28 @@ Seven core Pydantic models in `src/emergent_constitution/models/`:
 
 ## Key Source Files
 
+### V1 (basic simulation)
 - `src/emergent_constitution/models/` — Pydantic data models (agent, constitution, history, proposal, tick)
-- `src/emergent_constitution/config.py` — `SimulationConfig`
+- `src/emergent_constitution/config.py` — `SimulationConfig` and `SimulationConfigV2`
 - `src/emergent_constitution/initialization.py` — Agent/state creation
 - `src/emergent_constitution/economics.py` — Production, tax, redistribution
-- `src/emergent_constitution/citizen.py` — Proposal/vote decision logic
+- `src/emergent_constitution/citizen.py` — Proposal/vote decision logic (v1)
 - `src/emergent_constitution/voting.py` — Vote tallying, proposal validation
-- `src/emergent_constitution/lead.py` — Lead tick loop (Governor)
+- `src/emergent_constitution/lead.py` — Lead tick loop (Governor, v1 and v2)
 - `src/emergent_constitution/observer.py` — Statistics computation (Gini, Pareto)
 - `src/emergent_constitution/reporter.py` — Markdown report generation
 - `src/emergent_constitution/rng.py` — Seeded RNG wrapper (PROP-001)
 - `src/emergent_constitution/logging.py` — structlog configuration
 - `src/emergent_constitution/__main__.py` — CLI entry point
+
+### V2 (DSGE-HA engine)
+- `src/emergent_constitution/numerical_solver.py` — VFI household solver (NumPy-vectorized, policy cache)
+- `src/emergent_constitution/entrepreneurial_solver.py` — Firm value, utility-based entry/exit, optimal capital
+- `src/emergent_constitution/market_clearing.py` — Analytical Cobb-Douglas equilibrium prices
+- `src/emergent_constitution/constitution_engine.py` — Rule enforcement, taxation, transfers, public goods
+- `src/emergent_constitution/citizen_v2.py` — Rule-based proposal/voting for benchmark mode
+- `src/emergent_constitution/llm_providers.py` — LLM provider abstraction (Anthropic, Mock)
+- `docs/model_paper.tex` — LaTeX academic paper documenting the DSGE-HA model
 
 ## Critical Design Constraints
 
@@ -129,6 +148,7 @@ pytest --cov=emergent_constitution --cov-report=term-missing
 
 - **Language:** Python (3.10+)
 - **State models:** Pydantic
+- **Numerics:** NumPy (vectorized VFI, market clearing)
 - **Formatter/linter:** Ruff (`ruff format .`, `ruff check .`)
-- **Testing:** pytest (186 tests, 96% coverage)
+- **Testing:** pytest (977 tests)
 - **Orchestration:** Single-process tick loop
