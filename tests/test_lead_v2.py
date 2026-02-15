@@ -409,8 +409,8 @@ class TestExecuteProduction:
 class TestEnforceConstitution:
     """Test step 6: constitution enforcement."""
 
-    def test_default_constitution_zero_tax(self, short_mock_config: SimulationConfigV2) -> None:
-        """Default constitution has 0% tax; no revenue collected."""
+    def test_default_constitution_collects_tax(self, short_mock_config: SimulationConfigV2) -> None:
+        """Default constitution has 10% tax; revenue is collected."""
         lead = LeadV2(short_mock_config)
         households = [h.model_copy(deep=True) for h in lead.period_state.households]
         firms = lead.period_state.firms
@@ -422,7 +422,7 @@ class TestEnforceConstitution:
         )
 
         total_taxes = sum(h.taxes_paid for h in updated_h)
-        assert total_taxes == pytest.approx(0.0, abs=1e-10)
+        assert total_taxes > 0.0  # 10% default tax should collect revenue
 
 
 class TestUpdateStates:

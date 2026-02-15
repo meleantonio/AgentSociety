@@ -136,14 +136,14 @@ def create_default_constitution() -> ConstitutionV2:
     """Create the default initial constitution with baseline rules.
 
     Returns:
-        ConstitutionV2 with flat tax (0%), equal-share transfers,
+        ConstitutionV2 with flat tax (10%), equal-share transfers,
         public goods provision, majority voting, and private property.
     """
     rules = {
         "flat_tax": ConstitutionalRule(
             name="flat_tax",
             rule_type=RuleType.TAX_SCHEDULE,
-            parameters={"rate": 0.0},
+            parameters={"rate": 0.1},
             description="Flat income tax at the specified rate.",
             enforcement_code="tax = income * rate",
         ),

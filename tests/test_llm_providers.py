@@ -290,8 +290,8 @@ class TestCreateProvider:
         provider = create_provider(config, rng)
         assert isinstance(provider, MockProvider)
 
-    def test_create_anthropic_fails_without_package(self, rng: SimulationRNG) -> None:
-        """use_llm=True with anthropic provider fails if package not installed."""
+    def test_create_anthropic_falls_back_to_mock_without_package(self, rng: SimulationRNG) -> None:
+        """use_llm=True with anthropic provider falls back to MockProvider if package not installed."""
         config = SimulationConfig(num_agents=5, max_ticks=10, use_llm=True)
         # Only run this test if anthropic is not installed
         try:
@@ -299,8 +299,8 @@ class TestCreateProvider:
 
             pytest.skip("anthropic package is installed")
         except ImportError:
-            with pytest.raises(LLMProviderError, match="not installed"):
-                create_provider(config, rng)
+            provider = create_provider(config, rng)
+            assert isinstance(provider, MockProvider)
 
 
 # ---------------------------------------------------------------------------

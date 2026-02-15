@@ -461,9 +461,17 @@ def create_provider(
         return MockProvider(rng=rng, config=config)
 
     if provider_name == "anthropic":
-        return AnthropicProvider(config=config)
+        try:
+            return AnthropicProvider(config=config)
+        except (LLMProviderError, Exception) as exc:
+            log.warning(
+                "provider.anthropic_fallback_to_mock",
+                error=str(exc),
+                reason="Failed to create AnthropicProvider; falling back to MockProvider",
+            )
+            return MockProvider(rng=rng, config=config)
 
-    raise LLMProviderError(f"Unknown LLM provider: {config.llm_provider}")
+    raise LLMProviderError(f"Unknown LLM provider: {getattr(config, 'llm_provider', 'unknown')}")
 
 
 # ---------------------------------------------------------------------------
