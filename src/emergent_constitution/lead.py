@@ -527,6 +527,12 @@ class LeadV2:
         # Step 1: Draw shocks
         households, shocks = self._draw_shocks(t, households, shocks)
 
+        # Step 1b: Apply productivity effects from novel institutional rules
+        # before market clearing so prices reflect institutional effects
+        households = self.constitution_engine.apply_productivity_effects(
+            households, constitution, self.period_state.market
+        )
+
         # Step 2: Clear markets
         market = self._clear_markets(households, firms, shocks)
 
@@ -535,9 +541,12 @@ class LeadV2:
             households, firms, market, constitution
         )
 
-        # Step 4: Validate constraints
+        # Step 4: Validate constraints (including mechanism effect constraints)
+        mechanism_constraints = self.constitution_engine.compute_agent_constraints(
+            households, constitution, market
+        )
         econ_decisions = self._validate_constraints(
-            econ_decisions, households, market, constitution
+            econ_decisions, households, market, constitution, mechanism_constraints
         )
 
         # Step 4b: Set labor_supply and income on households from validated decisions
@@ -772,16 +781,19 @@ class LeadV2:
         households: list[HouseholdState],
         market: MarketState,
         constitution: ConstitutionV2,
+        mechanism_constraints: dict[str, dict[str, float]] | None = None,
     ) -> dict[str, EconomicDecision]:
         """Project economic decisions onto the feasible set.
 
-        Ensures consumption and leisure are within budget constraints.
+        Ensures consumption and leisure are within budget constraints,
+        including any custom bounds from mechanism effects.
 
         Args:
             decisions: Raw economic decisions from step 3.
             households: Current household states.
             market: Current market equilibrium.
             constitution: Current constitution.
+            mechanism_constraints: Optional custom bounds from mechanism effects.
 
         Returns:
             Constrained economic decisions.
@@ -795,7 +807,22 @@ class LeadV2:
             tax = income * tax_rate
             transfer = 0.0  # Conservative; actual transfers computed in step 6
             budget = compute_budget(h, market.wage, market.interest_rate, tax, transfer)
-            constrained[h.id] = enforce_budget_constraint(decision, h, budget, self.config.a_min)
+            clamped = enforce_budget_constraint(decision, h, budget, self.config.a_min)
+
+            # Apply mechanism effect constraints
+            if mechanism_constraints and h.id in mechanism_constraints:
+                bounds = mechanism_constraints[h.id]
+                cons = clamped.consumption
+                leis = clamped.leisure
+                cons = max(cons, bounds.get("consumption_min", cons))
+                cons = min(cons, bounds.get("consumption_max", cons))
+                leis = max(leis, bounds.get("leisure_min", leis))
+                leis = min(leis, bounds.get("leisure_max", leis))
+                cons = max(0.0, cons)
+                leis = max(0.0, min(1.0, leis))
+                clamped = EconomicDecision(consumption=cons, leisure=leis)
+
+            constrained[h.id] = clamped
 
         log.debug("step4.constraints_validated", num_agents=len(constrained))
         return constrained
@@ -947,11 +974,18 @@ class LeadV2:
             firms, households, constitution
         )
 
+        # Apply mechanism effects from novel institution rules
+        households, pg_extra = self.constitution_engine.enforce_mechanism_effects(
+            households, constitution, market, self.config.a_min
+        )
+        public_goods += pg_extra
+
         log.debug(
             "step6.constitution_enforced",
             revenue=round(revenue, 2),
             public_goods=round(public_goods, 4),
             transfer_revenue=round(transfer_revenue, 2),
+            mechanism_pg_extra=round(pg_extra, 4),
         )
 
         return households, public_goods
@@ -1034,9 +1068,7 @@ class LeadV2:
             self.rng.shuffle(h_order)
 
             for h in h_order:
-                proposal = decide_proposal_v2(
-                    h, constitution, self.config.num_agents, self.rng
-                )
+                proposal = decide_proposal_v2(h, constitution, self.config.num_agents, self.rng)
                 if proposal is not None:
                     is_valid, reason = validate_proposal_v2(proposal, constitution)
                     if is_valid:

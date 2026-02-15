@@ -102,30 +102,85 @@ _POLITICAL_SYSTEM_PROMPT = (
     "You are a citizen-agent in a constitutional democracy simulation. "
     "Your goal is to propose and vote on rules that improve societal welfare "
     "according to your values (equality vs liberty preference).\n\n"
-    "AVAILABLE RULE TYPES:\n"
+    "BUILT-IN RULE TYPES (with dedicated enforcement):\n"
     "- tax_schedule: Tax rates and structure. Parameters: rate (0-1). "
     "enforcement_code variables: income, rate, wealth.\n"
     "- transfer_program: Redistribution method. Parameters: method "
     "('equal_share' or 'means_tested').\n"
     "- public_goods: Fraction of revenue for public goods. Parameters: "
-    "fraction (0-1).\n"
+    "fraction_of_revenue (0-1).\n"
     "- market_regulation: Market rules. Parameters vary (e.g., minimum_wage).\n"
-    "- firm_regulation: Firm constraints. Parameters vary (e.g., max_firm_size).\n"
+    "- firm_regulation: Firm constraints. Parameters vary (e.g., max_workers).\n"
     "- voting_procedure: Voting thresholds. Parameters: threshold (0-1).\n"
-    "- property_rights: Property regime rules.\n"
-    "- custom: Any rule with custom enforcement_code. Sandbox functions: "
-    "abs, min, max, sqrt, log, exp. Variables: income, rate, wealth.\n\n"
+    "- property_rights: Property regime rules.\n\n"
+    "NOVEL INSTITUTION TYPES (enforced via mechanism_effects):\n"
+    "You can also propose entirely NEW types of institutions! Use any rule_type "
+    "string (e.g., 'insurance', 'education', 'financial_regulation', 'labor_law', "
+    "'environmental', 'social_institution', or invent your own). These are enforced "
+    "via structured 'mechanism_effects' — a list of effect declarations.\n\n"
+    "MECHANISM EFFECTS FRAMEWORK:\n"
+    "Each effect has:\n"
+    "- target: 'revenue' (collect money), 'distribution' (pay out), "
+    "'productivity' (modify agent productivity), 'wealth_flow' (direct transfer), "
+    "'constraint' (bound on decisions), 'utility' (bonus/penalty), "
+    "'public_goods' (add to public pool)\n"
+    "- scope: 'all', 'workers', 'entrepreneurs', 'wealth_below', "
+    "'wealth_above' (with scope_threshold)\n"
+    "- magnitude_code: Python expression using variables: income, wealth, "
+    "productivity, consumption, leisure, labor_supply, wage, interest_rate, "
+    "revenue, num_agents, plus all rule parameters\n"
+    "- magnitude_default: fallback value if code fails\n"
+    "- direction: 'add' or 'subtract'\n"
+    "- priority: ordering (lower = first)\n\n"
+    "EXAMPLE 1 — Unemployment Insurance:\n"
+    "{\n"
+    '  "action": "add",\n'
+    '  "rule_name": "unemployment_insurance",\n'
+    '  "rule_type": "insurance",\n'
+    '  "parameters": {"premium_rate": 0.02, "benefit_rate": 1.5},\n'
+    '  "description": "Workers pay 2% premium; low-wealth agents receive '
+    '1.5x share of collected premiums",\n'
+    '  "mechanism_effects": [\n'
+    '    {"target": "revenue", "scope": "workers", '
+    '"magnitude_code": "income * premium_rate"},\n'
+    '    {"target": "distribution", "scope": "wealth_below", '
+    '"scope_threshold": 50, '
+    '"magnitude_code": "revenue / num_agents * benefit_rate", '
+    '"direction": "add"}\n'
+    "  ]\n"
+    "}\n\n"
+    "EXAMPLE 2 — Education System:\n"
+    "{\n"
+    '  "action": "add",\n'
+    '  "rule_name": "public_education",\n'
+    '  "rule_type": "education",\n'
+    '  "parameters": {"tax_rate": 0.03, "productivity_boost": 0.05},\n'
+    '  "description": "3% education tax funds productivity improvements '
+    'for low-productivity workers",\n'
+    '  "mechanism_effects": [\n'
+    '    {"target": "revenue", "scope": "all", '
+    '"magnitude_code": "income * tax_rate"},\n'
+    '    {"target": "productivity", "scope": "wealth_below", '
+    '"scope_threshold": 100, '
+    '"magnitude_code": "productivity_boost", "direction": "add"}\n'
+    "  ]\n"
+    "}\n\n"
+    "Or invent your own category! The simulation will mechanically enforce "
+    "whatever effects you specify.\n\n"
     "HOW TO PROPOSE:\n"
     "- action: 'add' (new rule), 'modify' (change existing), or 'remove'\n"
-    "- rule_name: Identifier for the rule\n"
-    "- rule_type: One of the types above\n"
+    "- rule_name: Identifier for the rule (snake_case)\n"
+    "- rule_type: Any string (built-in or novel)\n"
     "- parameters: Dict of parameter values\n"
-    "- enforcement_code: Optional Python expression for custom logic\n\n"
+    "- description: Natural-language description for voters to read\n"
+    "- enforcement_code: Optional Python expression (for built-in types)\n"
+    "- mechanism_effects: List of effect declarations (for novel types)\n\n"
     "HOW TO VOTE:\n"
     "- Consider your values: high equality preference -> favor redistribution; "
     "high liberty preference -> favor low taxes and free markets\n"
     "- Consider how the rule affects you personally and society overall\n"
-    "- Review the societal conditions (Gini, unemployment, output) to identify problems\n"
+    "- Read the description and mechanism_effects of each proposal carefully\n"
+    "- Review societal conditions (Gini, unemployment, output) to identify problems\n"
     "- Review recent proposal outcomes to avoid repeating rejected approaches\n\n"
     "Respond with a PoliticalDecision containing an optional proposal and votes "
     "on existing rules."
@@ -452,17 +507,28 @@ class LLMDecisionEngine:
             "government_spending": market.government_spending,
         }
 
-        # (c) Current constitution (serialized)
+        # (c) Current constitution (serialized, including mechanism_effects)
+        rules_ctx: dict[str, dict[str, Any]] = {}
+        for name, rule in constitution.rules.items():
+            rule_info: dict[str, Any] = {
+                "type": str(rule.rule_type),
+                "parameters": rule.parameters,
+                "description": rule.description,
+            }
+            if rule.mechanism_effects:
+                rule_info["mechanism_effects"] = [
+                    {
+                        "target": str(e.target),
+                        "scope": str(e.scope),
+                        "magnitude_code": e.magnitude_code,
+                        "direction": e.direction,
+                    }
+                    for e in rule.mechanism_effects
+                ]
+            rules_ctx[name] = rule_info
         constitution_ctx = {
             "voting_rule": constitution.voting_rule,
-            "rules": {
-                name: {
-                    "type": rule.rule_type.value,
-                    "parameters": rule.parameters,
-                    "description": rule.description,
-                }
-                for name, rule in constitution.rules.items()
-            },
+            "rules": rules_ctx,
         }
 
         # (d) Recent history summary
@@ -494,7 +560,8 @@ class LLMDecisionEngine:
         """Build enriched context for political decisions.
 
         Extends _build_context with societal conditions, history summary,
-        rule type guide, and recent proposal outcomes.
+        rule type guide, institutional suggestions, mechanism effects
+        summaries, and recent proposal outcomes.
 
         Args:
             agent: The household agent state.
@@ -509,7 +576,8 @@ class LLMDecisionEngine:
         ctx = self._build_context(agent, market, constitution, "")
 
         # Societal conditions from most recent history entry
-        ctx["societal_conditions"] = self._extract_societal_conditions(market, history)
+        societal = self._extract_societal_conditions(market, history)
+        ctx["societal_conditions"] = societal
 
         # Recent history summary
         ctx["recent_history"] = self._build_history_summary(history)
@@ -517,8 +585,14 @@ class LLMDecisionEngine:
         # Rule type guide
         ctx["rule_type_guide"] = self._build_rule_type_guide()
 
+        # Institutional suggestions based on societal conditions
+        ctx["institutional_suggestions"] = self._generate_institutional_suggestions(societal)
+
         # Recent proposal outcomes
         ctx["recent_proposal_outcomes"] = recent_outcomes or []
+
+        # Mechanism effects summary for active rules
+        ctx["active_mechanism_effects"] = self._summarize_mechanism_effects(constitution)
 
         return ctx
 
@@ -620,6 +694,9 @@ class LLMDecisionEngine:
     def _build_rule_type_guide() -> dict[str, dict[str, Any]]:
         """Build a guide describing available rule types with examples.
 
+        Includes both built-in types with dedicated enforcement and
+        novel types enforced via the mechanism_effects framework.
+
         Returns:
             Dict mapping rule type names to descriptions and examples.
         """
@@ -647,11 +724,11 @@ class LLMDecisionEngine:
                 },
             },
             "public_goods": {
-                "description": "Public goods allocation. Parameters: fraction (0-1).",
+                "description": "Public goods allocation. Parameters: fraction_of_revenue (0-1).",
                 "example": {
                     "action": "modify",
-                    "rule_name": "public_goods",
-                    "parameters": {"fraction": 0.3},
+                    "rule_name": "public_goods_provision",
+                    "parameters": {"fraction_of_revenue": 0.3},
                 },
             },
             "market_regulation": {
@@ -701,7 +778,156 @@ class LLMDecisionEngine:
                     "enforcement_code": "min(wealth, max_wealth)",
                 },
             },
+            # Novel institution types
+            "insurance": {
+                "description": (
+                    "Insurance programs (health, unemployment, disaster). "
+                    "Use mechanism_effects: revenue (premiums) + distribution (payouts)."
+                ),
+                "example": {
+                    "action": "add",
+                    "rule_name": "unemployment_insurance",
+                    "rule_type": "insurance",
+                    "parameters": {"premium_rate": 0.02, "benefit_rate": 1.5},
+                    "mechanism_effects": [
+                        {
+                            "target": "revenue",
+                            "scope": "workers",
+                            "magnitude_code": "income * premium_rate",
+                        },
+                        {
+                            "target": "distribution",
+                            "scope": "wealth_below",
+                            "scope_threshold": 50,
+                            "magnitude_code": "revenue / num_agents * benefit_rate",
+                            "direction": "add",
+                        },
+                    ],
+                },
+            },
+            "education": {
+                "description": (
+                    "Education and training programs. "
+                    "Use mechanism_effects: revenue (funding) + productivity (boost)."
+                ),
+                "example": {
+                    "action": "add",
+                    "rule_name": "public_education",
+                    "rule_type": "education",
+                    "parameters": {"tax_rate": 0.03, "boost": 0.05},
+                    "mechanism_effects": [
+                        {
+                            "target": "revenue",
+                            "scope": "all",
+                            "magnitude_code": "income * tax_rate",
+                        },
+                        {
+                            "target": "productivity",
+                            "scope": "wealth_below",
+                            "scope_threshold": 100,
+                            "magnitude_code": "boost",
+                            "direction": "add",
+                        },
+                    ],
+                },
+            },
         }
+
+    @staticmethod
+    def _generate_institutional_suggestions(
+        societal_conditions: dict[str, Any],
+    ) -> list[str]:
+        """Generate targeted institutional suggestions based on conditions.
+
+        Examines societal metrics and suggests novel institutions that
+        might address observed problems.
+
+        Args:
+            societal_conditions: Dict with gini, unemployment, output, etc.
+
+        Returns:
+            List of suggestion strings for the political context.
+        """
+        suggestions: list[str] = []
+
+        gini = societal_conditions.get("gini_coefficient")
+        unemployment = societal_conditions.get("unemployment_rate")
+        welfare = societal_conditions.get("social_welfare")
+        output = societal_conditions.get("aggregate_output")
+
+        if gini is not None and gini > 0.4:
+            suggestions.append(
+                f"High inequality (Gini={gini:.3f}). Consider: progressive wealth tax, "
+                "means-tested transfers, unemployment insurance, or an education "
+                "system to boost low-income productivity."
+            )
+        if gini is not None and gini < 0.15:
+            suggestions.append(
+                f"Very low inequality (Gini={gini:.3f}). Consider: reducing redistribution "
+                "or adding incentive-based programs to boost output."
+            )
+        if unemployment is not None and unemployment > 0.15:
+            suggestions.append(
+                f"High unemployment ({unemployment:.1%}). Consider: job training programs "
+                "(education type), wage subsidies (labor_law type), or public "
+                "works (public_goods)."
+            )
+        if output is not None and output < 10.0:
+            suggestions.append(
+                f"Low aggregate output ({output:.1f}). Consider: R&D incentives "
+                "(firm_regulation type), productivity-boosting education, "
+                "or entrepreneurship support programs."
+            )
+        if welfare is not None and welfare < 0.1:
+            suggestions.append(
+                f"Low social welfare ({welfare:.3f}). Consider: broad-based insurance, "
+                "public goods expansion, or progressive transfers."
+            )
+
+        if not suggestions:
+            suggestions.append(
+                "Society is relatively stable. Consider: institutional innovation "
+                "like environmental protection, financial regulation, or social "
+                "institutions that could improve long-term outcomes."
+            )
+
+        return suggestions
+
+    @staticmethod
+    def _summarize_mechanism_effects(
+        constitution: ConstitutionV2,
+    ) -> list[dict[str, Any]]:
+        """Summarize active mechanism effects for agent context.
+
+        Args:
+            constitution: Active constitutional rules.
+
+        Returns:
+            List of dicts summarizing rules with mechanism effects.
+        """
+        summaries: list[dict[str, Any]] = []
+        for name, rule in constitution.rules.items():
+            if not rule.mechanism_effects:
+                continue
+            effects_summary = []
+            for e in rule.mechanism_effects:
+                effects_summary.append(
+                    {
+                        "target": str(e.target),
+                        "scope": str(e.scope),
+                        "direction": e.direction,
+                    }
+                )
+            summaries.append(
+                {
+                    "rule_name": name,
+                    "rule_type": str(rule.rule_type),
+                    "description": rule.description,
+                    "num_effects": len(rule.mechanism_effects),
+                    "effects": effects_summary,
+                }
+            )
+        return summaries
 
     # -------------------------------------------------------------------
     # Internal: prompt construction
