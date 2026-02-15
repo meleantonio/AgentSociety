@@ -367,7 +367,7 @@ class TestFormatConstitutionalTimelineV2:
     def test_no_changes(self):
         history = [_make_history_entry_v2(0), _make_history_entry_v2(5)]
         text = _format_constitutional_timeline_v2(history)
-        assert "No constitutional changes" in text
+        assert "No governance activity" in text
 
     def test_with_changes(self):
         history = [

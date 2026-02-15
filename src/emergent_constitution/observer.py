@@ -296,6 +296,8 @@ class ObserverV2:
             cumulative_welfare=self._cumulative_welfare,
             wage=market.wage,
             interest_rate=market.interest_rate,
+            proposals=list(period_state.proposals),
+            votes=list(period_state.votes),
             rule_changes=rule_changes,
             constitution_snapshot=constitution.model_copy(deep=True),
         )

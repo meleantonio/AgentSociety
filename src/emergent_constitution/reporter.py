@@ -450,29 +450,101 @@ def _format_welfare_summary(welfare: WelfareSummary) -> str:
 
 
 def _format_constitutional_timeline_v2(history: list[HistoryEntryV2]) -> str:
-    """Format a chronological timeline of v2 constitutional changes.
+    """Format a detailed chronological timeline of all governance activity.
+
+    Shows every proposal, vote outcome, and constitutional modification
+    for every period, plus the constitution state after changes.
 
     Args:
         history: List of HistoryEntryV2 objects.
 
     Returns:
-        Markdown section with rule changes by period.
+        Markdown section with full governance detail by period.
     """
     if not history:
         return "## Constitutional Timeline\n\nNo observations recorded."
 
-    changes_found = False
+    any_activity = False
     lines = ["## Constitutional Timeline\n"]
 
     for entry in history:
-        if entry.rule_changes:
-            changes_found = True
-            lines.append(f"**Period {entry.period}:**")
+        has_proposals = bool(entry.proposals)
+        has_votes = bool(entry.votes)
+        has_changes = bool(entry.rule_changes)
+
+        if not has_proposals and not has_votes and not has_changes:
+            continue
+
+        any_activity = True
+        lines.append(f"### Period {entry.period}\n")
+
+        # --- Proposals submitted ---
+        if has_proposals:
+            lines.append(f"**Proposals submitted ({len(entry.proposals)}):**\n")
+            for i, prop in enumerate(entry.proposals, 1):
+                params_str = ""
+                if prop.parameters:
+                    params_str = ", ".join(
+                        f"{k}={v}" for k, v in prop.parameters.items()
+                    )
+                desc = f" — *{prop.description}*" if prop.description else ""
+                lines.append(
+                    f"{i}. **{prop.action}** `{prop.rule_name}`"
+                    f" [{params_str}] by agent `{prop.proposer_id}`{desc}"
+                )
+            lines.append("")
+
+        # --- Vote outcomes ---
+        if has_votes:
+            lines.append(f"**Votes ({len(entry.votes)}):**\n")
+            lines.append(
+                "| # | Action | Rule | Result | For | Against"
+                " | Total | Voting Rule |"
+            )
+            lines.append("| --- " * 8 + "|")
+            for i, vote in enumerate(entry.votes, 1):
+                p = vote.proposal
+                result = "PASSED" if vote.passed else "REJECTED"
+                params_str = ""
+                if p.parameters:
+                    params_str = " " + ", ".join(
+                        f"{k}={v}" for k, v in p.parameters.items()
+                    )
+                lines.append(
+                    f"| {i} | {p.action} | `{p.rule_name}`{params_str}"
+                    f" | **{result}** | {vote.votes_for}"
+                    f" | {vote.votes_against} | {vote.total_eligible}"
+                    f" | {vote.voting_rule_used} |"
+                )
+            lines.append("")
+
+        # --- Rule changes applied ---
+        if has_changes:
+            lines.append("**Changes applied:**\n")
             for change in entry.rule_changes:
                 lines.append(f"- {change}")
+            lines.append("")
 
-    if not changes_found:
-        lines.append("No constitutional changes during the simulation.")
+        # --- Constitution state after changes ---
+        if has_changes:
+            const = entry.constitution_snapshot
+            lines.append(
+                f"**Constitution after period {entry.period}:**"
+                f" voting={const.voting_rule}\n"
+            )
+            lines.append("| Rule | Type | Parameters |")
+            lines.append("| --- | --- | --- |")
+            for name, rule in sorted(const.rules.items()):
+                params_str = ", ".join(
+                    f"{k}={v}" for k, v in rule.parameters.items()
+                )
+                lines.append(
+                    f"| {name} | {rule.rule_type.value} | {params_str} |"
+                )
+            lines.append("")
+
+    if not any_activity:
+        lines.append("No governance activity during the simulation.")
 
     return "\n".join(lines)
 
