@@ -116,6 +116,8 @@ class HistoryEntryV2(BaseModel):
         cumulative_welfare: Discounted sum of welfare to date.
         wage: Equilibrium wage w_t.
         interest_rate: Equilibrium interest rate r_t.
+        proposals: All constitutional proposals submitted this period.
+        votes: All vote outcomes this period.
         rule_changes: List of rule change descriptions this period.
         constitution_snapshot: Copy of the constitution at this period.
     """
@@ -137,6 +139,8 @@ class HistoryEntryV2(BaseModel):
     cumulative_welfare: float = 0.0
     wage: float = 0.0
     interest_rate: float = 0.0
+    proposals: list[ConstitutionalProposal] = Field(default_factory=list)
+    votes: list[VoteOutcomeV2] = Field(default_factory=list)
     rule_changes: list[str] = Field(default_factory=list)
     constitution_snapshot: ConstitutionV2
 
