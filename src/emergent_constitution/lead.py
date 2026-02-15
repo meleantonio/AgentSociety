@@ -16,6 +16,7 @@ import math
 import structlog
 
 from emergent_constitution.citizen import decide_proposal, decide_trade, decide_votes
+from emergent_constitution.citizen_v2 import decide_proposal_v2, decide_votes_v2
 from emergent_constitution.coalition import form_coalitions
 from emergent_constitution.config import SimulationConfig, SimulationConfigV2
 from emergent_constitution.constitution_engine import ConstitutionEngine
@@ -745,8 +746,13 @@ class LeadV2:
                 constitution=constitution,
             )
         else:
-            # Benchmark mode: solver-driven entrepreneurial decisions
-            entre_decisions = self._entre_solver.solve_all(households, firms, market)
+            # Benchmark mode: solver-driven entrepreneurial decisions with utility comparison
+            entre_public_goods = self.constitution_engine.enforce_public_goods(
+                constitution, 0.0, len(households)
+            )
+            entre_decisions = self._entre_solver.solve_all(
+                households, firms, market, public_goods=entre_public_goods
+            )
 
         log.debug(
             "step3.decisions_collected",
@@ -1022,8 +1028,35 @@ class LeadV2:
                 if decision.votes:
                     all_votes[agent_id] = decision.votes
         else:
-            # Benchmark mode: no governance
-            pass
+            # Benchmark mode: rule-based governance (mirrors v1 citizen logic)
+            # Shuffle for fairness
+            h_order = list(households)
+            self.rng.shuffle(h_order)
+
+            for h in h_order:
+                proposal = decide_proposal_v2(
+                    h, constitution, self.config.num_agents, self.rng
+                )
+                if proposal is not None:
+                    is_valid, reason = validate_proposal_v2(proposal, constitution)
+                    if is_valid:
+                        proposals.append(proposal)
+                    else:
+                        self._recent_rejections.append(
+                            (h.id, proposal.rule_name, reason or "validation_failed")
+                        )
+                        log.debug(
+                            "step7.benchmark_proposal_rejected",
+                            agent_id=h.id,
+                            reason=reason,
+                        )
+
+            # Collect votes from all households
+            if proposals:
+                for h in households:
+                    agent_votes = decide_votes_v2(h, proposals, constitution)
+                    if agent_votes:
+                        all_votes[h.id] = agent_votes
 
         # Tally votes for each proposal
         vote_outcomes: list[VoteOutcomeV2] = []

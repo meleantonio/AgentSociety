@@ -60,7 +60,7 @@
 
 % --- Abstract ---
 \begin{abstract}
-We develop a dynamic stochastic general equilibrium model with heterogeneous agents (DSGE-HA) in which governance institutions are fully endogenous. Agents choose between working and entrepreneurship, face idiosyncratic productivity and ability shocks discretized via the Rouwenhorst method, and collectively design taxation, redistribution, public goods provision, regulation, and voting rules through a constitutional framework. Economic decisions (consumption, savings, labor supply) are solved via value function iteration on the Bellman equation, while political decisions---proposal generation and voting---are delegated to large language models (LLMs) that receive structured economic context, mimicking bounded rationality in institutional design. The mutable constitution feeds back into economic equilibrium through fiscal policy and market regulation. We characterize the recursive competitive equilibrium, describe the computational algorithm, and discuss the model's implications for the co-evolution of institutions and inequality.
+We develop a dynamic stochastic general equilibrium model with heterogeneous agents (DSGE-HA) in which governance institutions are fully endogenous. Agents choose between working and entrepreneurship via utility-based occupational choice, face idiosyncratic productivity and ability shocks discretized via the Rouwenhorst method, and collectively design taxation, redistribution, public goods provision, regulation, and voting rules through a constitutional framework. Economic decisions (consumption, savings, labor supply) are solved via value function iteration on the Bellman equation, while political decisions---proposal generation and voting---are delegated to large language models (LLMs) that receive structured economic context, mimicking bounded rationality in institutional design. Analytical Cobb-Douglas market clearing yields zero-error equilibrium prices each period. The mutable constitution feeds back into economic equilibrium through fiscal policy and market regulation. We characterize the recursive competitive equilibrium, describe the computational algorithm, and discuss the model's implications for the co-evolution of institutions and inequality.
 \end{abstract}
 
 \medskip
@@ -204,29 +204,53 @@ where $p_0$ is the base success probability and $\bar{x}^{rd}$ is the mean R\&D 
 
 \subsection{Occupational Choice: Entry and Exit}\label{sec:entry_exit}
 
+Occupational choice is determined by comparing lifetime utility as a worker versus an entrepreneur. This utility-based framework replaces profit-based entry/exit conditions, capturing the full cost of entrepreneurship including reduced leisure.
+
 \subsubsection{Firm Value}
 
-The value of a firm to an entrepreneur with ability $e$ and capital $K$ is the truncated present discounted value of expected profits:
+The value of a firm to an entrepreneur with ability $e$ and capital $K$ uses a closed-form infinite-horizon formula based on the stationary distribution of the ability Markov chain:
 \begin{equation}\label{eq:firm_value}
-  V(e, K) = \sum_{\tau=0}^{H} \beta_f^{\, \tau} \, \E\!\left[\pi(e_\tau, K) \,\big|\, e_0 = e\right],
+  V(e, K) = \pi(e, K) + \frac{\beta_f \cdot \pi(\bar{e}, K)}{1 - \beta_f},
 \end{equation}
-where $H$ is the valuation horizon, $\beta_f$ is the firm discount factor, and the expectation is taken over the Markov evolution of entrepreneurial ability.
+where $\pi(e, K)$ is current-period profit at actual ability $e$, $\pi(\bar{e}, K)$ is the stationary expected profit evaluated at $\bar{e} = \E_{\pi^*}[e]$ (the mean ability under the stationary distribution $\pi^*$ of the ability Markov chain), and $\beta_f$ is the firm discount factor. The first term reflects exact current-period profit; the second term treats future profits as a perpetuity at the stationary expected level.
+
+The stationary distribution $\pi^*$ is computed once at initialization via power iteration on the ability transition matrix $\Pi_e$, converging to $\|\pi^{(k+1)} - \pi^{(k)}\|_\infty < 10^{-12}$.
+
+\subsubsection{Worker Lifetime Value}
+
+The lifetime utility value of remaining a worker is approximated as a perpetuity of per-period utility at the household's optimal allocation:
+\begin{equation}\label{eq:worker_value}
+  V^W(s_i) = \frac{u(c^*_W, \ell^*_W, G)}{1 - \beta_d},
+\end{equation}
+where $\ell^*_W \approx 0.35$ is the typical optimal leisure from VFI, and $c^*_W \approx 0.7 \times y_{avail}$ is approximate optimal consumption (consuming roughly 70\% of available income including labor and asset income).
+
+\subsubsection{Entrepreneur Lifetime Value}
+
+The lifetime utility value of entrepreneurship accounts for firm profits, reduced leisure from running a firm, and the entry cost penalty:
+\begin{equation}\label{eq:entre_value}
+  V^E(s_i) = \frac{u(c^*_E, \ell_E, G)}{1 - \beta_d} - \Phi(F),
+\end{equation}
+where $\ell_E = 0.2$ reflects the reduced leisure of an entrepreneur (running a firm takes effort), $c^*_E$ is consumption from firm profits plus asset income, and $\Phi(F)$ is the entry cost expressed in utility units:
+\begin{equation}\label{eq:entry_cost_utility}
+  \Phi(F) = F \cdot \frac{\alpha_u}{c^*_E} \cdot u(c^*_E, \ell_E, G),
+\end{equation}
+i.e., the entry cost $F$ scaled by the marginal utility of consumption. The term $\Phi(F)$ is included only for new entrants, not for continuing entrepreneurs.
 
 \subsubsection{Entry Condition}
 
-A worker enters entrepreneurship if
+A worker enters entrepreneurship if two conditions hold:
 \begin{equation}\label{eq:entry}
-  V(e_i, K^*) > a_{it} \cdot \max\{r_t, 0\} + F,
+  V^E(s_i) > V^W(s_i) \qquad \text{and} \qquad a_{it} \geq \underline{K} + F,
 \end{equation}
-where $K^*$ is the optimal capital level (determined by grid search over the feasible set $[\underline{K}, a_{it} - F]$), $F$ is the sunk entry cost, and $\underline{K}$ is the minimum capital requirement.
+where $\underline{K}$ is the minimum capital requirement and $F$ is the sunk entry cost. The first condition ensures that entrepreneurship yields higher lifetime utility; the second ensures financial feasibility.
 
 \subsubsection{Exit Condition}
 
-An existing entrepreneur exits (liquidates) if
+An existing entrepreneur exits (reverts to worker) if
 \begin{equation}\label{eq:exit}
-  V(e_i, K_f) < K_f,
+  V^W(s_i) > V^E(s_i),
 \end{equation}
-i.e., the present value of continuing falls below the liquidation value of the firm's capital.
+where $V^E$ is evaluated without the entry cost penalty (since the entrepreneur is already operating). Exit occurs when lifetime worker utility exceeds the ongoing value of the firm.
 
 \subsubsection{Optimal Capital}
 
@@ -369,15 +393,23 @@ where $\phi \in [0, 1]$ is the fraction of revenue allocated to public goods, sp
 
 \subsubsection{Transfers}
 
-The remaining revenue $R - \phi R$ is distributed according to transfer rules. Under equal-share redistribution:
+The remaining revenue $R - \phi R$ is distributed according to transfer rules. Three transfer methods are available.
+
+Under \emph{equal-share} redistribution:
 \begin{equation}\label{eq:equal_transfer}
   Tr_i = \frac{(1 - \phi) R}{N}.
 \end{equation}
-Under means-tested redistribution:
+Under \emph{means-tested} redistribution:
 \begin{equation}\label{eq:means_tested}
   Tr_i = \frac{(1 - \phi) R \cdot \omega_i}{\sum_{j=1}^{N} \omega_j}, \qquad \omega_i = \frac{1}{\max\{a_{it}, 1\}},
 \end{equation}
 so that poorer agents receive larger transfers.
+
+Under \emph{progressive} redistribution, the same inverse-wealth weighting as means-tested is used:
+\begin{equation}\label{eq:progressive_transfer}
+  Tr_i^{prog} = \frac{(1 - \phi) R \cdot \omega_i}{\sum_{j=1}^{N} \omega_j}, \qquad \omega_i = \frac{1}{\max\{a_{it}, 1\}}.
+\end{equation}
+The progressive method serves as an alternative label for the inverse-wealth weighting scheme, available as a distinct policy choice in the constitutional framework.
 
 
 \subsection{Political Process}\label{sec:political}
@@ -390,7 +422,7 @@ The constitutional amendment process follows four stages.
   \item \textbf{Validation.} Each proposal is validated against structural constraints:
   \begin{itemize}
     \item Tax rates must lie in $[0, 1]$.
-    \item Transfer methods must be recognized (equal-share, means-tested).
+    \item Transfer methods must be recognized (equal-share, means-tested, progressive).
     \item Public goods fractions must lie in $[0, 1]$.
     \item Enforcement code must pass an AST-level safety check (restricted to arithmetic, comparisons, and safe builtins; no imports, function definitions, or attribute access).
     \item Additions cannot duplicate existing rule names; modifications require existing rules; the active voting rule cannot be removed.
@@ -535,47 +567,47 @@ Interpolate $(c^*, \ell^*)$ at each agent's actual $(a_{it}, z_{it})$\;
 When all agents share identical utility parameters (auto-detected at runtime), the VFI in \Cref{alg:vfi} is solved once, producing policy grids $c^*(a, z)$ and $\ell^*(a, z)$. Each agent's decision is then obtained by interpolation at their state $(a_{it}, z_{it})$, reducing the computational cost from $O(N)$ VFI solves to one.
 \end{remark}
 
+\begin{remark}[NumPy Vectorization and Caching]
+The VFI implementation uses NumPy vectorized operations throughout, replacing nested Python loops with array computations for approximately 100$\times$ speedup. Budget arrays, utility evaluations, and expected value interpolation are computed as batch array operations. Additionally, VFI results are cached with keys based on rounded market parameters (wage, interest rate, public goods, transfer, tax rate proxy, and utility weights). When prices are nearly identical across consecutive periods, the cache avoids redundant VFI solves entirely.
+\end{remark}
 
-\subsection{Market Clearing via Tatonnement}\label{sec:tatonnement}
 
-Equilibrium prices $(w_t, r_t)$ are found via a tatonnement (price adjustment) algorithm.
+\subsection{Analytical Market Clearing}\label{sec:market_clearing}
 
-\begin{algorithm}[t]
-\caption{Tatonnement Market Clearing}\label{alg:tatonnement}
-\KwIn{Households, firms, aggregate TFP $A_t$, config}
-\KwOut{Equilibrium prices $(w^*, r^*)$}
-Compute aggregate supply: $L^s = \sum_i z_i (1-\ell_i)$, $K^s = \sum_i a_i$\;
-Initialize $(w, r)$ from previous period or analytical guess\;
-\For{$iter = 1, \ldots, N_{tat}$}{
-  Compute firm demands $(L^d, K^d)$ from FOCs \eqref{eq:foc_labor}\;
-  $\Delta_L \leftarrow L^d - L^s$; \quad $\Delta_K \leftarrow K^d - K^s$\;
-  $\epsilon \leftarrow \sqrt{\Delta_L^2 + \Delta_K^2}$\;
-  \If{$|\Delta_L| < \epsilon_{tat}$ \textbf{and} $|\Delta_K| < \epsilon_{tat}$}{
-    \Return $(w, r)$\;
-  }
-  $w \leftarrow w + \eta \cdot \Delta_L / L^s$\;
-  $r \leftarrow r + \eta \cdot \Delta_K / K^s$\;
-  Clamp $w \geq 10^{-6}$, $r \geq -0.99$\;
-}
-\Return best $(w, r)$ found\;
-\end{algorithm}
+Equilibrium prices $(w_t, r_t)$ are computed analytically from the Cobb-Douglas first-order conditions, yielding zero clearing error by construction.
 
-When no explicit firms exist, the model uses a representative firm and computes prices analytically from Cobb-Douglas FOCs:
-\begin{equation}\label{eq:analytical_prices}
-  w = (1-\alpha) \frac{Y}{L^s}, \qquad r = \alpha \frac{Y}{K^s} - \delta, \qquad Y = A_t (K^s)^\alpha (L^s)^{1-\alpha}.
+Aggregate factor supplies are computed as:
+\begin{equation}\label{eq:factor_supplies}
+  L^s = \sum_{i: o_{it} = W} z_{it} \cdot \hat{h}_{it}, \qquad K^s = \max\!\left\{\sum_{i=1}^{N} a_{it},\; \sum_{f \in \calF_t} K_f\right\},
 \end{equation}
+where $\hat{h}_{it} = (1 - \ell_{it})$ if the household has a current labor supply decision, and $\hat{h}_{it} = 0.5$ as a fallback for stale labor supply values (i.e., before the first VFI solve). A floor guard of $10^{-8}$ is applied to both factor supplies to prevent division by zero.
+
+With Cobb-Douglas production $Y = A_t (K^s)^\alpha (L^s)^{1-\alpha}$, the competitive equilibrium prices are:
+\begin{equation}\label{eq:analytical_prices}
+  w = (1-\alpha) \frac{Y}{L^s}, \qquad r = \alpha \frac{Y}{K^s} - \delta,
+\end{equation}
+subject to the floor guards $w \geq 10^{-6}$ and $r \geq -0.99$.
+
+\begin{remark}[Zero Clearing Error]
+Because prices are derived directly from the aggregate production function and factor supplies, this analytical approach produces identically zero market clearing error ($\epsilon = 0$) each period. This eliminates the convergence uncertainty of iterative methods.
+\end{remark}
+
+\begin{remark}[Historical Note]
+An earlier version of the model used a tatonnement (price adjustment) algorithm that iteratively updated prices to equate firm-level factor demands with aggregate supply. The analytical approach dominates: it is faster, simpler, and exact. Tatonnement remains available as a conceptual alternative for models with non-Cobb-Douglas production where closed-form solutions do not exist.
+\end{remark}
 
 
 \subsection{Entrepreneurial Decision Solver}\label{sec:entre_solver}
 
-The entrepreneurial solver computes the truncated PDV of expected profits \eqref{eq:firm_value} by forward simulation of the ability Markov chain. Starting from a probability distribution concentrated at the agent's current ability state, the solver:
+The entrepreneurial solver implements the utility-based occupational choice described in \Cref{sec:entry_exit}. The algorithm proceeds in four stages:
 \begin{enumerate}
-  \item Computes expected ability at each horizon step $\tau$ using the transition matrix;
-  \item Evaluates optimal labor demand via \eqref{eq:optimal_labor};
-  \item Computes profit via \eqref{eq:firm_profit};
-  \item Discounts and sums to obtain $V(e, K)$.
+  \item \textbf{Stationary distribution.} At initialization, compute the stationary distribution $\pi^*$ of the ability Markov chain via power iteration (1000 iterations, tolerance $10^{-12}$). The expected stationary ability is $\bar{e} = \sum_j \pi^*_j \cdot e_j$.
+  \item \textbf{Firm value.} For a given capital $K$, evaluate $V(e, K)$ using the closed-form formula \eqref{eq:firm_value}: current-period profit at actual ability plus the discounted perpetuity of stationary expected profit.
+  \item \textbf{Optimal capital.} Find $K^*$ via grid search over 20 equally-spaced points in $[\underline{K}, a_{it} - F]$, maximizing $V(e_i, K)$.
+  \item \textbf{Utility comparison.} Compute worker lifetime value $V^W$ \eqref{eq:worker_value} and entrepreneur lifetime value $V^E$ \eqref{eq:entre_value}, including the entry cost penalty $\Phi(F)$ for new entrants. The agent enters entrepreneurship if $V^E > V^W$ and $a_{it} \geq \underline{K} + F$; an existing entrepreneur exits if $V^W > V^E$.
 \end{enumerate}
-Optimal capital $K^*$ is found by grid search over 20 equally-spaced points in $[\underline{K}, a_{it} - F]$.
+
+The solver also receives the current per-capita public goods level $G$ as input, since $G$ enters the utility function used for the occupational comparison.
 
 
 \subsection{Period Lifecycle}\label{sec:lifecycle}
@@ -587,12 +619,12 @@ Each period $t$ executes nine steps in a fixed order, guaranteeing determinism.
 \KwIn{Previous period state $(t-1)$, configuration}
 \KwOut{Updated period state $t$}
 \textbf{Step 1: Draw shocks.} Transition productivity and ability via Markov chains; draw aggregate TFP from AR(1); optionally draw preference shocks.\;
-\textbf{Step 2: Clear markets.} Find equilibrium $(w_t, r_t)$ via tatonnement (\Cref{alg:tatonnement}).\;
-\textbf{Step 3: Collect decisions.} Solve household Bellman via VFI (\Cref{alg:vfi}); solve entrepreneurial entry/exit (\Cref{sec:entre_solver}).\;
+\textbf{Step 2: Clear markets.} Find equilibrium $(w_t, r_t)$ via analytical Cobb-Douglas FOCs (\Cref{sec:market_clearing}).\;
+\textbf{Step 3: Collect decisions.} Solve household Bellman via VFI (\Cref{alg:vfi}); solve utility-based entrepreneurial entry/exit (\Cref{sec:entre_solver}), receiving per-capita public goods $G$ for occupational comparison.\;
 \textbf{Step 4: Validate constraints.} Project decisions onto feasible set: clamp $\ell \in [0,1]$, $c \leq budget - \underline{a}$, $a' \geq \underline{a}$.\;
 \textbf{Step 5: Execute production.} Compute firm outputs via \eqref{eq:firm_production}; distribute income via \eqref{eq:firm_profit}; apply R\&D shocks via \eqref{eq:rd_prob}; create/liquidate firms.\;
 \textbf{Step 6: Enforce constitution.} Apply tax rules, compute public goods, distribute transfers, apply regulations.\;
-\textbf{Step 7: Process governance.} Collect proposals, validate, vote, amend constitution (at proposal-interval periods).\;
+\textbf{Step 7: Process governance.} Collect proposals, validate, vote, amend constitution (at proposal-interval periods). In benchmark mode, uses rule-based governance with dissatisfaction-driven proposals and value-weighted voting (\Cref{sec:benchmark}).\;
 \textbf{Step 8: Update states.} Apply DSGE-HA budget constraint: $a' = (1+r)a + y + \pi - c - T + Tr$; compute realized utility $u(c, \ell, G)$.\;
 \textbf{Step 9: Observe.} Compute Gini, Pareto efficiency, aggregates (Y, C, I), wealth quantiles, welfare, firm stats; append to history.\;
 \end{algorithm}
@@ -660,10 +692,23 @@ Several design choices ensure reproducibility:
 The model supports a \emph{benchmark mode} that disables LLM calls entirely. In benchmark mode:
 \begin{itemize}
   \item Economic decisions are computed by the VFI solver.
-  \item Entrepreneurial decisions are computed by the analytical solver.
-  \item No governance changes occur (the constitution remains at its initial values).
+  \item Entrepreneurial decisions are computed by the utility-based occupational choice solver.
+  \item Governance uses rule-based decision-making via deterministic citizen logic.
 \end{itemize}
-This enables controlled experiments that isolate the effect of endogenous governance by comparing LLM-mode and benchmark-mode simulations with the same seed and configuration.
+
+Unlike earlier versions where the constitution remained static, benchmark mode now features a \emph{rule-based governance} system. Each agent's political behavior is determined algorithmically:
+
+\begin{itemize}
+  \item \textbf{Proposal gating.} Each agent skips proposal generation with probability 0.85, so that approximately 15\% of agents propose in each governance period.
+  \item \textbf{Dissatisfaction-based proposals.} Proposing agents evaluate their dissatisfaction with current constitutional rules based on their value vector $(v^{eq}, v^{lib})$. For instance, an agent with high $v^{eq}$ is dissatisfied if taxes are low relative to their preferred rate $v^{eq} \times 0.5$. The agent proposes a modification to the rule with highest dissatisfaction, adjusting the parameter 30\% toward their preferred value.
+  \item \textbf{Value-weighted voting.} Each agent scores proposals using a weighted combination:
+  \begin{equation}\label{eq:benchmark_voting}
+    \text{Score} = 0.6 \times \text{value\_alignment} + 0.4 \times \text{self\_interest},
+  \end{equation}
+  where value alignment measures how the proposal moves the rule toward the agent's ideological preference, and self-interest reflects the material impact (e.g., wealthier agents oppose higher taxes). The agent votes \emph{for} if $\text{Score} > 0.5$.
+\end{itemize}
+
+This enables controlled experiments that compare LLM-augmented governance against a well-defined rule-based baseline, rather than a static constitution.
 
 
 % =============================================================================
@@ -709,7 +754,8 @@ Ability volatility & $\sigma_e$ & 0.30 & Innovation s.d. \\
 Grid points & $N_e$ & 5 & Rouwenhorst \\
 Entry cost & $F$ & 5.0 & Sunk cost \\
 Minimum capital & $\underline{K}$ & 10.0 & --- \\
-Firm value horizon & $H$ & 20 & Truncation \\
+Firm discount factor & $\beta_f$ & 0.95 & Perpetuity discounting \\
+Entrepreneur leisure & $\ell_E$ & 0.20 & Reduced leisure (effort) \\
 \midrule
 \multicolumn{4}{l}{\textit{Aggregate shocks}} \\
 TFP persistence & $\rho_A$ & 0.95 & AR(1) \\
@@ -721,9 +767,9 @@ TFP improvement mean & $\mu_{rd}$ & 0.05 & --- \\
 TFP improvement std & $\sigma_{rd}$ & 0.02 & --- \\
 \midrule
 \multicolumn{4}{l}{\textit{Market clearing}} \\
-Max iterations & $N_{tat}$ & 100 & Tatonnement \\
-Tolerance & $\epsilon_{tat}$ & $10^{-6}$ & Convergence \\
-Step size & $\eta$ & 0.01 & Price adjustment \\
+Method & --- & Analytical & Cobb-Douglas FOCs \\
+Wage floor & --- & $10^{-6}$ & Numerical guard \\
+Interest rate floor & --- & $-0.99$ & Numerical guard \\
 \midrule
 \multicolumn{4}{l}{\textit{VFI}} \\
 Asset grid points & $N_a$ & 100 & Exponential spacing \\
@@ -732,8 +778,10 @@ Max iterations & --- & 500 & --- \\
 Convergence tolerance & $\epsilon_{VFI}$ & $10^{-6}$ & Sup-norm \\
 \midrule
 \multicolumn{4}{l}{\textit{Governance}} \\
+Default tax rate & $\tau_0$ & 0.10 & Initial flat tax (10\%) \\
 Proposal interval & $K_{prop}$ & 5 & Periods \\
 Observer interval & $K_{obs}$ & 5 & Periods \\
+Proposal skip probability & --- & 0.85 & Benchmark mode gating \\
 \midrule
 \multicolumn{4}{l}{\textit{LLM}} \\
 Temperature & --- & 0.0 & Deterministic \\
@@ -743,7 +791,7 @@ Cache enabled & --- & Yes & --- \\
 \end{tabular}
 \end{table}
 
-The capital share $\alpha = 0.33$ and depreciation rate $\delta = 0.10$ are standard in the macro literature. The productivity process parameters ($\rho_z = 0.9$, $\sigma_z = 0.2$) are in the range estimated by \citet{storesletten2004} for annual earnings. The entrepreneurial ability process is somewhat more volatile ($\sigma_e = 0.3$) and less persistent ($\rho_e = 0.85$), reflecting the higher turnover in business outcomes relative to labor earnings. The discount factor $\beta_d = 0.95$ and the Cobb-Douglas utility weights ($\alpha_u = 0.4$, $\beta_u = 0.35$, $\gamma_u = 0.25$) are within the range of estimated preferences in the literature on labor supply and public goods valuation.
+The capital share $\alpha = 0.33$ and depreciation rate $\delta = 0.10$ are standard in the macro literature. The productivity process parameters ($\rho_z = 0.9$, $\sigma_z = 0.2$) are in the range estimated by \citet{storesletten2004} for annual earnings. The entrepreneurial ability process is somewhat more volatile ($\sigma_e = 0.3$) and less persistent ($\rho_e = 0.85$), reflecting the higher turnover in business outcomes relative to labor earnings. The discount factor $\beta_d = 0.95$ and the Cobb-Douglas utility weights ($\alpha_u = 0.4$, $\beta_u = 0.35$, $\gamma_u = 0.25$) are within the range of estimated preferences in the literature on labor supply and public goods valuation. The entrepreneur leisure parameter $\ell_E = 0.2$ reflects the substantially higher time commitment of running a firm, and the firm discount factor $\beta_f = 0.95$ matches the household discount factor. The default tax rate of 10\% provides a non-trivial initial fiscal environment, and the proposal skip probability of 0.85 ensures a moderate density of proposals in benchmark mode.
 
 
 % =============================================================================
@@ -785,7 +833,7 @@ In LLM-augmented mode, the constitution evolves as agents observe economic outco
 
 \subsection{LLM vs.\ Benchmark Comparison}
 
-Comparing LLM-mode and benchmark-mode simulations isolates the effect of endogenous governance. In benchmark mode, the constitution remains at its initial values (zero taxes, flat transfers, majority voting), and all variation in outcomes comes from economic shocks and occupational dynamics. In LLM mode, constitutional changes introduce an additional source of dynamics that can either amplify or dampen economic fluctuations.
+Comparing LLM-mode and benchmark-mode simulations isolates the effect of LLM-augmented deliberation versus rule-based governance. In benchmark mode, the constitution evolves through rule-based governance with dissatisfaction-driven proposals and value-weighted voting (\Cref{sec:benchmark}), starting from the default constitution (10\% flat tax, equal-share transfers, majority voting). In LLM mode, constitutional changes are driven by LLM-generated proposals informed by rich economic context, potentially producing more nuanced institutional designs. Both modes feature endogenous governance, but they differ in the sophistication of the political reasoning.
 
 The welfare comparison is measured by cumulative discounted social welfare:
 \begin{equation}\label{eq:cumulative_welfare}
@@ -892,7 +940,8 @@ Production & \texttt{delta} & 0.1 & $(0, 1)$ \\
 Production & \texttt{min\_firm\_capital} & 10.0 & $> 0$ \\
 \midrule
 Entrepreneurial & \texttt{firm\_entry\_cost} & 5.0 & $> 0$ \\
-Entrepreneurial & \texttt{firm\_value\_horizon} & 20 & $\geq 1$ \\
+Entrepreneurial & \texttt{firm\_discount\_factor} & 0.95 & $(0, 1)$ \\
+Entrepreneurial & \texttt{entrepreneur\_leisure} & 0.2 & $(0, 1)$ \\
 \midrule
 Household & \texttt{a\_min} & 0.0 & $\geq 0$ \\
 Household & \texttt{initial\_wealth\_mean} & 100.0 & $> 0$ \\
@@ -903,12 +952,15 @@ Household & \texttt{utility\_beta} & 0.35 & $(0, 1)$ \\
 Household & \texttt{utility\_gamma} & 0.25 & $(0, 1)$ \\
 Household & \texttt{utility\_beta\_discount} & 0.95 & $(0, 1)$ \\
 \midrule
-Market clearing & \texttt{tatonnement\_max\_iter} & 100 & $\geq 1$ \\
-Market clearing & \texttt{tatonnement\_tolerance} & $10^{-6}$ & $> 0$ \\
-Market clearing & \texttt{tatonnement\_step\_size} & 0.01 & $> 0$ \\
+Market clearing & \texttt{method} & analytical & Cobb-Douglas FOCs \\
+Market clearing & \texttt{wage\_floor} & $10^{-6}$ & $> 0$ \\
+Market clearing & \texttt{interest\_rate\_floor} & $-0.99$ & $> -1$ \\
 \midrule
 Intervals & \texttt{proposal\_interval} & 5 & $\geq 1$ \\
 Intervals & \texttt{observer\_interval} & 5 & $\geq 1$ \\
+\midrule
+Governance & \texttt{default\_tax\_rate} & 0.1 & $[0, 1]$ \\
+Governance & \texttt{proposal\_skip\_prob} & 0.85 & $[0, 1]$ \\
 \midrule
 LLM & \texttt{use\_llm} & True & boolean \\
 LLM & \texttt{llm\_temperature} & 0.0 & $[0, 2]$ \\

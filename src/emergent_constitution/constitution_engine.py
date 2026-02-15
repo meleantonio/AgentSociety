@@ -468,8 +468,8 @@ class ConstitutionEngine:
             per_agent = available_revenue / num_agents
             return {h.id: per_agent for h in households}
 
-        if method == "means_tested":
-            # Inversely proportional to wealth
+        if method in ("means_tested", "progressive"):
+            # Inversely proportional to wealth — poorer agents receive more
             total_inverse_wealth = sum(1.0 / max(h.wealth, 1.0) for h in households)
             if total_inverse_wealth <= 0:
                 return {h.id: available_revenue / num_agents for h in households}
@@ -538,7 +538,7 @@ class ConstitutionEngine:
         """Validate a TRANSFER_PROGRAM rule."""
         method = rule.parameters.get("method")
         if method is not None:
-            valid_methods = {"equal_share", "means_tested", "proportional"}
+            valid_methods = {"equal_share", "means_tested", "proportional", "progressive"}
             if method not in valid_methods:
                 return False, f"Unknown transfer method: {method}"
         return True, "OK"

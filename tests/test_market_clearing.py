@@ -282,7 +282,7 @@ class TestAnalyticalEquilibrium:
         y = 1.0 * (total_k**0.33) * (total_l**0.67)
 
         result = _analytical_equilibrium(
-            households, total_l, total_k, aggregate_tfp=1.0, config=config
+            households, [], total_l, total_k, aggregate_tfp=1.0, config=config
         )
 
         expected_w = 0.67 * y / total_l
@@ -298,7 +298,7 @@ class TestAnalyticalEquilibrium:
         config = SimulationConfigV2(num_agents=20, seed=42)
         total_l = sum(h.productivity * h.labor_supply for h in households)
         total_k = sum(h.wealth for h in households)
-        result = _analytical_equilibrium(households, total_l, total_k, 1.0, config)
+        result = _analytical_equilibrium(households, [], total_l, total_k, 1.0, config)
         assert result.market_clearing_error == 0.0
         assert result.labor_excess_demand == 0.0
         assert result.capital_excess_demand == 0.0
@@ -312,8 +312,8 @@ class TestAnalyticalEquilibrium:
         config_lo = SimulationConfigV2(num_agents=20, seed=42, alpha=0.2)
         config_hi = SimulationConfigV2(num_agents=20, seed=42, alpha=0.5)
 
-        r_lo = _analytical_equilibrium(households, total_l, total_k, 1.0, config_lo)
-        r_hi = _analytical_equilibrium(households, total_l, total_k, 1.0, config_hi)
+        r_lo = _analytical_equilibrium(households, [], total_l, total_k, 1.0, config_lo)
+        r_hi = _analytical_equilibrium(households, [], total_l, total_k, 1.0, config_hi)
         assert r_hi.interest_rate > r_lo.interest_rate
 
 
