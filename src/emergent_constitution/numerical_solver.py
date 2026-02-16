@@ -74,6 +74,21 @@ class NumericalSolver:
         # VFI policy cache keyed on market parameters
         self._vfi_cache: dict[tuple[float, ...], tuple[list[list[float]], list[list[float]]]] = {}
 
+        # Last computed VFI value function (for occupational choice, REQ-110)
+        self._last_value_func: list[list[float]] | None = None
+
+    def get_value_function(self) -> tuple[list[list[float]] | None, list[float]]:
+        """Return the last-computed VFI value function and asset grid.
+
+        Used by the entrepreneurial solver to read V^W(a, z) for
+        Bellman-based occupational choice (REQ-110).
+
+        Returns:
+            Tuple of (value_func, a_grid) where value_func is n_a x n_z
+            or (None, a_grid) if VFI has not yet been solved.
+        """
+        return self._last_value_func, self.a_grid
+
     def _build_numpy_arrays(self) -> None:
         """Convert grids to NumPy arrays for vectorized computation."""
         self._a_grid_np = np.array(self.a_grid, dtype=np.float64)
@@ -403,6 +418,9 @@ class NumericalSolver:
                 )
                 break
 
+        # Store converged value function for occupational choice (REQ-110)
+        self._last_value_func = v_func.tolist()
+
         # Convert back to list-of-lists for compatibility
         policy_c = policy_c_np.tolist()
         policy_l = policy_l_np.tolist()
@@ -573,6 +591,9 @@ class NumericalSolver:
                     method="python",
                 )
                 break
+
+        # Store converged value function for occupational choice (REQ-110)
+        self._last_value_func = [row[:] for row in v_new]
 
         return policy_c, policy_l
 
