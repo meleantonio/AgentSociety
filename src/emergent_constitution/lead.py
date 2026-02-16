@@ -35,10 +35,13 @@ from emergent_constitution.economics import (
 )
 from emergent_constitution.egm_solver import EGMSolver
 from emergent_constitution.entrepreneurial_solver import EntrepreneurialSolver
+from emergent_constitution.government import Government
+from emergent_constitution.market_clearing import clear_bond_market
 from emergent_constitution.initialization import initialize_simulation, initialize_simulation_v2
 from emergent_constitution.llm_citizen import CitizenLLM, PromptBuilder
 from emergent_constitution.llm_engine import LLMDecisionEngine
 from emergent_constitution.market_clearing import clear_markets
+from emergent_constitution.nominal import NominalBlock, NominalState
 from emergent_constitution.models.agent import AgentState
 from emergent_constitution.models.constitution import Constitution, ConstitutionV2
 from emergent_constitution.models.decisions import (
@@ -476,6 +479,24 @@ class LeadV2:
         # Firm ID counter
         self._next_firm_id: int = 0
 
+        # Government sector (REQ-306..309)
+        self._government = Government(
+            initial_debt=config.initial_debt,
+            debt_gdp_max=config.debt_gdp_max,
+            fiscal_rule_adjustment=config.fiscal_rule_adjustment,
+        )
+
+        # Nominal rigidities block (REQ-310..315)
+        if config.nominal_rigidities:
+            self._nominal_block: NominalBlock | None = NominalBlock(config)
+            self._nominal_state: NominalState = NominalState()
+            # Track steady-state output for output gap computation
+            self._steady_state_output: float = period_state.market.aggregate_output
+        else:
+            self._nominal_block = None
+            self._nominal_state = NominalState()
+            self._steady_state_output = period_state.market.aggregate_output
+
         # Track recent proposal outcomes for LLM governance context
         self._recent_rejections: list[tuple[str, str, str]] = []  # (agent_id, rule_name, reason)
         self._recent_vote_outcomes: list[dict] = []  # Structured vote outcome records
@@ -530,6 +551,14 @@ class LeadV2:
         # Step 2: Clear markets
         market = self._clear_markets(households, firms, shocks)
 
+        # Step 2b: Nominal block (REQ-310..315)
+        if self._nominal_block is not None:
+            self._nominal_state = self._compute_nominal(market, shocks)
+            # Pass real bond rate to market state for household solver
+            market = market.model_copy(
+                update={"interest_rate": self._nominal_state.real_bond_rate}
+            )
+
         # Step 3: Collect decisions
         econ_decisions, entre_decisions = self._collect_decisions(
             households, firms, market, constitution
@@ -573,6 +602,9 @@ class LeadV2:
         proposals, votes, constitution = self._process_governance(
             t, households, constitution, market
         )
+
+        # Step 7b: Update government budget (REQ-306..309)
+        self._update_government(households, market, public_goods)
 
         # Step 8: Update states
         households = self._update_states(households, econ_decisions, market, public_goods, firms)
@@ -1163,6 +1195,65 @@ class LeadV2:
         )
 
         return proposals, vote_outcomes, constitution
+
+    # ------------------------------------------------------------------
+    # Step 7b: Government budget update (REQ-306..309)
+    # ------------------------------------------------------------------
+
+    def _update_government(
+        self,
+        households: list[HouseholdState],
+        market: MarketState,
+        public_goods: float,
+    ) -> None:
+        """Update government budget and apply fiscal rule.
+
+        Computes bond market clearing rate, updates the government budget
+        constraint B' = (1+r^b)*B + G + Tr - T, and checks the fiscal rule.
+
+        When initial_debt is 0 (default), this is effectively a no-op since
+        the budget constraint with zero debt and balanced budget produces
+        zero new debt.
+
+        Args:
+            households: Current household states (with taxes_paid, transfers_received).
+            market: Current market equilibrium.
+            public_goods: Public goods per capita this period.
+        """
+        # Skip if no government debt to manage
+        if self.config.initial_debt <= 0.0 and self._government.state.debt <= 0.0:
+            return
+
+        # Compute fiscal aggregates from household states
+        tax_revenue = sum(h.taxes_paid for h in households)
+        transfers = sum(h.transfers_received for h in households)
+        spending = public_goods * len(households)
+
+        # Clear bond market to find equilibrium bond rate (REQ-307)
+        bond_rate, clearing_error = clear_bond_market(
+            households=households,
+            government_debt=max(self._government.state.debt, 0.0),
+            base_interest_rate=market.interest_rate,
+        )
+
+        # Update government budget constraint (REQ-306, PROP-010)
+        self._government.update_budget(
+            tax_revenue=tax_revenue,
+            spending=spending,
+            transfers=transfers,
+            bond_rate=bond_rate,
+        )
+
+        # Apply fiscal rule (REQ-309)
+        output = market.aggregate_output if market.aggregate_output > 0.0 else 1.0
+        tax_adjustment = self._government.fiscal_rule(output)
+
+        if tax_adjustment > 0.0:
+            log.info(
+                "step7b.fiscal_rule_active",
+                debt_to_gdp=round(self._government.state.debt_to_gdp, 4),
+                tax_adjustment=tax_adjustment,
+            )
 
     # ------------------------------------------------------------------
     # Step 8: Update states (REQ-001, 003, 006, 010)
