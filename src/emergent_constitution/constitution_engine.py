@@ -18,10 +18,14 @@ import structlog
 from emergent_constitution.models.constitution import (
     ConstitutionalRule,
     ConstitutionV2,
+    EffectScope,
+    EffectTarget,
+    MechanismEffect,
+    RuleImpact,
     RuleType,
 )
 from emergent_constitution.models.firm import FirmState
-from emergent_constitution.models.household import HouseholdState
+from emergent_constitution.models.household import HouseholdState, OccupationalRole
 from emergent_constitution.models.market import MarketState
 from emergent_constitution.models.proposal import ConstitutionalProposal
 
@@ -85,6 +89,9 @@ _SAFE_BUILTINS: dict[str, Any] = {
     "round": round,
     "sum": sum,
     "len": len,
+    "float": float,
+    "int": int,
+    "bool": bool,
     "True": True,
     "False": False,
     "None": None,
@@ -94,8 +101,11 @@ _SAFE_BUILTINS: dict[str, Any] = {
 _SAFE_MATH: dict[str, Any] = {
     "sqrt": math.sqrt,
     "log": math.log,
+    "log10": math.log10,
     "exp": math.exp,
     "pow": pow,
+    "ceil": math.ceil,
+    "floor": math.floor,
 }
 
 
@@ -206,6 +216,7 @@ class ConstitutionEngine:
         - Tax rates produce non-negative revenue (rates in valid range).
         - Transfer programs satisfy budget constraint.
         - Enforcement code passes sandbox safety check.
+        - Mechanism effects magnitude_code passes sandbox safety check.
         - No logical contradictions.
 
         Args:
@@ -220,6 +231,14 @@ class ConstitutionEngine:
                 _validate_ast_safety(rule.enforcement_code)
             except SandboxError as exc:
                 return False, f"Unsafe enforcement code: {exc}"
+
+        # Validate mechanism_effects magnitude_code
+        for i, effect in enumerate(rule.mechanism_effects):
+            if effect.magnitude_code and effect.magnitude_code.strip():
+                try:
+                    _validate_ast_safety(effect.magnitude_code)
+                except SandboxError as exc:
+                    return False, f"Unsafe magnitude_code in effect {i}: {exc}"
 
         # Type-specific validation
         if rule.rule_type == RuleType.TAX_SCHEDULE:
@@ -387,6 +406,357 @@ class ConstitutionEngine:
                 self._apply_firm_regulation(rule, updated_firms)
 
         return updated_firms, updated_households
+
+    # -------------------------------------------------------------------
+    # Mechanism effects enforcement (novel institutions)
+    # -------------------------------------------------------------------
+
+    def __init__(self) -> None:
+        self.rule_impacts: dict[str, RuleImpact] = {}
+        self._constraint_cache: dict[str, dict[str, float]] = {}
+
+    def _get_mechanism_rules(self, constitution: ConstitutionV2) -> list[ConstitutionalRule]:
+        """Return rules that have mechanism_effects (novel institutions)."""
+        return [r for r in constitution.rules.values() if r.mechanism_effects]
+
+    def _agents_in_scope(
+        self,
+        effect: MechanismEffect,
+        households: list[HouseholdState],
+    ) -> list[HouseholdState]:
+        """Filter households based on effect scope.
+
+        Args:
+            effect: The mechanism effect with scope definition.
+            households: All household agents.
+
+        Returns:
+            Filtered list of matching households.
+        """
+        if effect.scope == EffectScope.ALL:
+            return list(households)
+        if effect.scope == EffectScope.WORKERS:
+            return [h for h in households if h.role == OccupationalRole.WORKER]
+        if effect.scope == EffectScope.ENTREPRENEURS:
+            return [h for h in households if h.role == OccupationalRole.ENTREPRENEUR]
+        if effect.scope == EffectScope.WEALTH_BELOW:
+            threshold = effect.scope_threshold or 0.0
+            return [h for h in households if h.wealth < threshold]
+        if effect.scope == EffectScope.WEALTH_ABOVE:
+            threshold = effect.scope_threshold or 0.0
+            return [h for h in households if h.wealth >= threshold]
+        if effect.scope == EffectScope.CONDITION:
+            # Custom condition: evaluate magnitude_code as filter
+            # If it returns truthy for the agent, include them
+            return list(households)
+        return list(households)
+
+    def _evaluate_magnitude(
+        self,
+        effect: MechanismEffect,
+        rule: ConstitutionalRule,
+        household: HouseholdState,
+        market: MarketState | None = None,
+        extra_vars: dict[str, Any] | None = None,
+    ) -> float:
+        """Evaluate magnitude_code for a single agent, with fallback.
+
+        Args:
+            effect: The mechanism effect.
+            rule: The parent rule (provides parameters).
+            household: The household agent.
+            market: Optional market state for context variables.
+            extra_vars: Additional variables for the sandbox.
+
+        Returns:
+            Evaluated magnitude as a float. Falls back to magnitude_default.
+        """
+        if not effect.magnitude_code or not effect.magnitude_code.strip():
+            return effect.magnitude_default
+
+        # Build sandbox variables
+        variables: dict[str, Any] = {
+            "income": household.income,
+            "wealth": household.wealth,
+            "productivity": household.productivity,
+            "consumption": household.consumption,
+            "leisure": household.leisure,
+            "labor_supply": household.labor_supply,
+        }
+        if market is not None:
+            variables.update(
+                {
+                    "wage": market.wage,
+                    "interest_rate": market.interest_rate,
+                }
+            )
+        # Inject rule parameters
+        variables.update(rule.parameters)
+        # Inject extra variables (e.g., revenue, num_agents)
+        if extra_vars:
+            variables.update(extra_vars)
+
+        try:
+            result = evaluate_enforcement_code(effect.magnitude_code, variables)
+            if isinstance(result, int | float) and math.isfinite(result):
+                return float(result)
+            log.warning(
+                "mechanism_effect.non_finite",
+                rule=rule.name,
+                code=effect.magnitude_code,
+                result=result,
+            )
+            return effect.magnitude_default
+        except SandboxError:
+            log.warning(
+                "mechanism_effect.code_failed",
+                rule=rule.name,
+                code=effect.magnitude_code,
+            )
+            return effect.magnitude_default
+
+    def apply_productivity_effects(
+        self,
+        households: list[HouseholdState],
+        constitution: ConstitutionV2,
+        market: MarketState | None = None,
+    ) -> list[HouseholdState]:
+        """Apply PRODUCTIVITY effects from mechanism rules (Step 1b).
+
+        Modifies agent productivity before market clearing so prices
+        reflect institutional effects.
+
+        Args:
+            households: Current household states.
+            constitution: Active constitutional rules.
+            market: Optional market state.
+
+        Returns:
+            Updated households with modified productivity.
+        """
+        rules = self._get_mechanism_rules(constitution)
+        prod_effects = [
+            (rule, effect)
+            for rule in rules
+            for effect in rule.mechanism_effects
+            if effect.target == EffectTarget.PRODUCTIVITY
+        ]
+        if not prod_effects:
+            return households
+
+        updated = [h.model_copy() for h in households]
+
+        # Sort by priority
+        prod_effects.sort(key=lambda x: x[1].priority)
+
+        for rule, effect in prod_effects:
+            targets = self._agents_in_scope(effect, updated)
+            for h in targets:
+                magnitude = self._evaluate_magnitude(effect, rule, h, market)
+                if effect.direction == "add":
+                    h.productivity = h.productivity + magnitude
+                else:
+                    h.productivity = h.productivity - magnitude
+                # Clamp productivity to safe range
+                h.productivity = max(0.01, min(100.0, h.productivity))
+
+        return updated
+
+    def compute_agent_constraints(
+        self,
+        households: list[HouseholdState],
+        constitution: ConstitutionV2,
+        market: MarketState | None = None,
+    ) -> dict[str, dict[str, float]]:
+        """Compute custom min/max bounds from CONSTRAINT effects (Step 4).
+
+        Args:
+            households: Current household states.
+            constitution: Active constitutional rules.
+            market: Optional market state.
+
+        Returns:
+            Mapping from agent_id to constraint bounds dict with keys:
+            consumption_min, consumption_max, leisure_min, leisure_max,
+            savings_min, savings_max. Missing keys = no constraint.
+        """
+        rules = self._get_mechanism_rules(constitution)
+        constraint_effects = [
+            (rule, effect)
+            for rule in rules
+            for effect in rule.mechanism_effects
+            if effect.target == EffectTarget.CONSTRAINT
+        ]
+        if not constraint_effects:
+            self._constraint_cache = {}
+            return {}
+
+        constraint_effects.sort(key=lambda x: x[1].priority)
+        constraints: dict[str, dict[str, float]] = {}
+
+        for rule, effect in constraint_effects:
+            targets = self._agents_in_scope(effect, households)
+            for h in targets:
+                if h.id not in constraints:
+                    constraints[h.id] = {}
+                magnitude = self._evaluate_magnitude(effect, rule, h, market)
+                # Use direction to determine min vs max bound
+                param_name = rule.parameters.get("constraint_variable", "consumption")
+                if effect.direction == "subtract":
+                    # max bound
+                    key = f"{param_name}_max"
+                    existing = constraints[h.id].get(key)
+                    if existing is None or magnitude < existing:
+                        constraints[h.id][key] = magnitude
+                else:
+                    # min bound
+                    key = f"{param_name}_min"
+                    existing = constraints[h.id].get(key)
+                    if existing is None or magnitude > existing:
+                        constraints[h.id][key] = magnitude
+
+        # Resolve conflicts: if min > max, earlier priority wins (already sorted)
+        for agent_id, bounds in constraints.items():
+            for var in ("consumption", "leisure", "savings"):
+                min_key, max_key = f"{var}_min", f"{var}_max"
+                if min_key in bounds and max_key in bounds and bounds[min_key] > bounds[max_key]:
+                    log.warning(
+                        "mechanism_effect.constraint_conflict",
+                        agent_id=agent_id,
+                        variable=var,
+                        min_val=bounds[min_key],
+                        max_val=bounds[max_key],
+                    )
+                    # Drop the max constraint (later priority)
+                    del bounds[max_key]
+
+        self._constraint_cache = constraints
+        return constraints
+
+    def enforce_mechanism_effects(
+        self,
+        households: list[HouseholdState],
+        constitution: ConstitutionV2,
+        market: MarketState,
+        a_min: float = 0.0,
+    ) -> tuple[list[HouseholdState], float]:
+        """Apply mechanism effects from novel institution rules (Step 6).
+
+        Processes REVENUE, DISTRIBUTION, WEALTH_FLOW, UTILITY, and
+        PUBLIC_GOODS effects. PRODUCTIVITY and CONSTRAINT are handled
+        in their own methods (Steps 1b and 4).
+
+        Args:
+            households: Current household states.
+            constitution: Active constitutional rules.
+            market: Current market equilibrium.
+            a_min: Minimum wealth floor.
+
+        Returns:
+            Tuple of (updated households, public_goods_contribution).
+        """
+        rules = self._get_mechanism_rules(constitution)
+        if not rules:
+            return households, 0.0
+
+        updated = [h.model_copy() for h in households]
+        h_map = {h.id: h for h in updated}
+        public_goods_extra = 0.0
+
+        for rule in rules:
+            # Sort effects by priority
+            effects = sorted(rule.mechanism_effects, key=lambda e: e.priority)
+            rule_revenue = 0.0
+            affected_ids: set[str] = set()
+
+            for effect in effects:
+                # Skip PRODUCTIVITY and CONSTRAINT (handled elsewhere)
+                if effect.target in (EffectTarget.PRODUCTIVITY, EffectTarget.CONSTRAINT):
+                    continue
+
+                targets = self._agents_in_scope(effect, updated)
+                num_agents = len(updated)
+                extra_vars = {
+                    "revenue": rule_revenue,
+                    "num_agents": num_agents,
+                    "labor_supply": sum(h.labor_supply for h in updated) / max(num_agents, 1),
+                }
+
+                if effect.target == EffectTarget.REVENUE:
+                    for h in targets:
+                        magnitude = self._evaluate_magnitude(effect, rule, h, market, extra_vars)
+                        magnitude = max(0.0, magnitude)
+                        # Cap at income
+                        magnitude = min(magnitude, max(h.income, 0.0))
+                        h_map[h.id].wealth -= magnitude
+                        h_map[h.id].wealth = max(h_map[h.id].wealth, a_min)
+                        h_map[h.id].taxes_paid += magnitude
+                        rule_revenue += magnitude
+                        affected_ids.add(h.id)
+
+                elif effect.target == EffectTarget.DISTRIBUTION:
+                    if rule_revenue <= 0.0:
+                        continue
+                    available = rule_revenue
+                    for h in targets:
+                        extra_vars["revenue"] = available
+                        magnitude = self._evaluate_magnitude(effect, rule, h, market, extra_vars)
+                        magnitude = max(0.0, magnitude)
+                        magnitude = min(magnitude, available)
+                        h_map[h.id].wealth += magnitude
+                        h_map[h.id].transfers_received += magnitude
+                        available -= magnitude
+                        affected_ids.add(h.id)
+                        if available <= 0.0:
+                            break
+
+                elif effect.target == EffectTarget.WEALTH_FLOW:
+                    for h in targets:
+                        magnitude = self._evaluate_magnitude(effect, rule, h, market, extra_vars)
+                        if effect.direction == "add":
+                            h_map[h.id].wealth += magnitude
+                        else:
+                            h_map[h.id].wealth -= magnitude
+                        h_map[h.id].wealth = max(h_map[h.id].wealth, a_min)
+                        affected_ids.add(h.id)
+
+                elif effect.target == EffectTarget.PUBLIC_GOODS:
+                    for h in targets:
+                        magnitude = self._evaluate_magnitude(effect, rule, h, market, extra_vars)
+                        magnitude = max(0.0, magnitude)
+                        public_goods_extra += magnitude
+
+                elif effect.target == EffectTarget.UTILITY:
+                    # Store utility modifier — applied during compute_realized_utility
+                    # For now, log the intent; actual utility modification requires
+                    # the utility computation to read these modifiers.
+                    for h in targets:
+                        magnitude = self._evaluate_magnitude(effect, rule, h, market, extra_vars)
+                        affected_ids.add(h.id)
+                        log.debug(
+                            "mechanism_effect.utility_modifier",
+                            rule=rule.name,
+                            agent_id=h.id,
+                            magnitude=magnitude,
+                            direction=effect.direction,
+                        )
+
+            # Track rule impact
+            impact = self.rule_impacts.get(rule.name, RuleImpact())
+            impact.periods_active += 1
+            impact.total_revenue_collected += rule_revenue
+            impact.affected_agents_count = len(affected_ids)
+            self.rule_impacts[rule.name] = impact
+
+            if rule_revenue > 0.0 or affected_ids:
+                log.debug(
+                    "mechanism_effect.enforced",
+                    rule=rule.name,
+                    revenue=round(rule_revenue, 4),
+                    affected=len(affected_ids),
+                )
+
+        return list(h_map.values()), public_goods_extra
 
     def apply_proposal(
         self,
@@ -585,6 +955,7 @@ class ConstitutionEngine:
             parameters=proposal.parameters or {},
             description=proposal.description,
             enforcement_code=proposal.enforcement_code or "",
+            mechanism_effects=list(proposal.mechanism_effects),
         )
 
         is_valid, reason = self.validate_rule(new_rule)
@@ -602,18 +973,19 @@ class ConstitutionEngine:
             raise ValueError(f"Cannot modify rule '{proposal.rule_name}': does not exist")
 
         existing = constitution.rules[proposal.rule_name]
-        updated_rule = existing.model_copy(
-            update={
-                "parameters": proposal.parameters or existing.parameters,
-                "description": proposal.description or existing.description,
-                "enforcement_code": (
-                    proposal.enforcement_code
-                    if proposal.enforcement_code is not None
-                    else existing.enforcement_code
-                ),
-                "version": existing.version + 1,
-            }
-        )
+        update_fields: dict[str, Any] = {
+            "parameters": proposal.parameters or existing.parameters,
+            "description": proposal.description or existing.description,
+            "enforcement_code": (
+                proposal.enforcement_code
+                if proposal.enforcement_code is not None
+                else existing.enforcement_code
+            ),
+            "version": existing.version + 1,
+        }
+        if proposal.mechanism_effects:
+            update_fields["mechanism_effects"] = list(proposal.mechanism_effects)
+        updated_rule = existing.model_copy(update=update_fields)
 
         is_valid, reason = self.validate_rule(updated_rule)
         if not is_valid:

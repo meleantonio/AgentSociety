@@ -304,7 +304,7 @@ def _format_final_constitution_v2(constitution: ConstitutionV2) -> str:
 
     for name, rule in sorted(constitution.rules.items()):
         params_str = ", ".join(f"{k}={v}" for k, v in rule.parameters.items())
-        lines.append(f"| {name} | {rule.rule_type.value} | {params_str} |")
+        lines.append(f"| {name} | {rule.rule_type} | {params_str} |")
 
     return "\n".join(lines)
 
@@ -484,9 +484,7 @@ def _format_constitutional_timeline_v2(history: list[HistoryEntryV2]) -> str:
             for i, prop in enumerate(entry.proposals, 1):
                 params_str = ""
                 if prop.parameters:
-                    params_str = ", ".join(
-                        f"{k}={v}" for k, v in prop.parameters.items()
-                    )
+                    params_str = ", ".join(f"{k}={v}" for k, v in prop.parameters.items())
                 desc = f" — *{prop.description}*" if prop.description else ""
                 lines.append(
                     f"{i}. **{prop.action}** `{prop.rule_name}`"
@@ -497,19 +495,14 @@ def _format_constitutional_timeline_v2(history: list[HistoryEntryV2]) -> str:
         # --- Vote outcomes ---
         if has_votes:
             lines.append(f"**Votes ({len(entry.votes)}):**\n")
-            lines.append(
-                "| # | Action | Rule | Result | For | Against"
-                " | Total | Voting Rule |"
-            )
+            lines.append("| # | Action | Rule | Result | For | Against | Total | Voting Rule |")
             lines.append("| --- " * 8 + "|")
             for i, vote in enumerate(entry.votes, 1):
                 p = vote.proposal
                 result = "PASSED" if vote.passed else "REJECTED"
                 params_str = ""
                 if p.parameters:
-                    params_str = " " + ", ".join(
-                        f"{k}={v}" for k, v in p.parameters.items()
-                    )
+                    params_str = " " + ", ".join(f"{k}={v}" for k, v in p.parameters.items())
                 lines.append(
                     f"| {i} | {p.action} | `{p.rule_name}`{params_str}"
                     f" | **{result}** | {vote.votes_for}"
@@ -529,18 +522,13 @@ def _format_constitutional_timeline_v2(history: list[HistoryEntryV2]) -> str:
         if has_changes:
             const = entry.constitution_snapshot
             lines.append(
-                f"**Constitution after period {entry.period}:**"
-                f" voting={const.voting_rule}\n"
+                f"**Constitution after period {entry.period}:** voting={const.voting_rule}\n"
             )
             lines.append("| Rule | Type | Parameters |")
             lines.append("| --- | --- | --- |")
             for name, rule in sorted(const.rules.items()):
-                params_str = ", ".join(
-                    f"{k}={v}" for k, v in rule.parameters.items()
-                )
-                lines.append(
-                    f"| {name} | {rule.rule_type.value} | {params_str} |"
-                )
+                params_str = ", ".join(f"{k}={v}" for k, v in rule.parameters.items())
+                lines.append(f"| {name} | {rule.rule_type} | {params_str} |")
             lines.append("")
 
     if not any_activity:

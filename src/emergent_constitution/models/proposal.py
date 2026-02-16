@@ -8,9 +8,12 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
-from emergent_constitution.models.constitution import RuleType
+from emergent_constitution.models.constitution import (
+    MechanismEffect,
+    _normalize_rule_type,
+)
 
 # ============================================================================
 # v1 types (backward compatibility)
@@ -77,19 +80,30 @@ class ConstitutionalProposal(BaseModel):
         proposer_id: ID of the agent who proposed this.
         action: Whether to add, modify, or remove a rule.
         rule_name: Target rule name.
-        rule_type: Required for "add" action.
+        rule_type: Required for "add" action (any string, not restricted to enum).
         parameters: New parameters for the rule.
         description: Natural-language rationale.
         enforcement_code: Enforcement specification.
+        mechanism_effects: Structured effect declarations for novel institutions.
     """
 
     proposer_id: str
     action: Literal["add", "modify", "remove"]
     rule_name: str
-    rule_type: RuleType | None = None
+    rule_type: str | None = None
     parameters: dict[str, Any] | None = None
     description: str = ""
     enforcement_code: str | None = None
+    mechanism_effects: list[MechanismEffect] = Field(default_factory=list)
+
+    @field_validator("rule_type", mode="before")
+    @classmethod
+    def _normalize_rule_type(cls, v: Any) -> str | None:
+        if v is None:
+            return None
+        if isinstance(v, str):
+            return _normalize_rule_type(v)
+        return str(v)
 
 
 class VoteOutcomeV2(BaseModel):
