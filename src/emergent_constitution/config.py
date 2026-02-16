@@ -183,6 +183,26 @@ class SimulationConfigV2(BaseModel):
         default=0.02, ge=0.0, description="Std of TFP improvement factor"
     )
 
+    # --- Distribution mode (Phase 2: KFE) ---
+    distribution_mode: Literal["individual", "kfe"] = Field(
+        default="individual",
+        description=(
+            "'individual' tracks N individual agents (default, backward compat). "
+            "'kfe' uses Kolmogorov Forward Equation distribution tracking "
+            "(REQ-201..205). Feature-gated: default OFF."
+        ),
+    )
+    kfe_convergence_tolerance: float = Field(
+        default=1e-10,
+        gt=0.0,
+        description="L1 convergence tolerance for stationary KFE distribution (REQ-205).",
+    )
+    kfe_max_iterations: int = Field(
+        default=10_000,
+        ge=1,
+        description="Maximum iterations for KFE stationary distribution (REQ-205).",
+    )
+
     # --- Feature flags ---
     fix_entrepreneur_budget: bool = Field(
         default=False,
