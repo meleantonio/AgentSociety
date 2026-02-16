@@ -2,9 +2,19 @@
 
 An agent-based political economy simulation built on a DSGE-HA (Dynamic Stochastic General Equilibrium with Heterogeneous Agents) framework. 50+ citizen-agents with heterogeneous preferences, endowments, and values self-organize governance from scratch. An LLM (Claude) makes all economic, entrepreneurial, and political decisions for each agent, while a numerical solver provides a benchmark. The simulation tracks the emergence of property rights, voting rules, taxation, coalition dynamics, and measures outcomes such as Pareto efficiency, Gini coefficient, and social welfare.
 
+What happens when you give AI agents an economy and no rules? **The Emergent Constitution** is a heterogeneous agents economic simulation where 50+ citizen-agents build governance from scratch. Each agent has unique wealth, productivity, preferences, and ideological values. Every period, agents make consumption-savings decisions, choose between employment and entrepreneurship, propose constitutional rules, and vote on others' proposals. A Walrasian market clearing algorithm finds equilibrium prices across labor, capital, and bond markets. Agents can create any institution they want -- tax schedules, transfer programs, public goods, regulations, voting procedures -- through democratic voting. The twist: an LLM makes all decisions for each agent, receiving Bellman-equation-derived preferences as context so political choices are grounded in economic self-interest. The simulation tracks how inequality, institutions, and welfare co-evolve, producing a rich dataset for studying questions at the intersection of political economy and AI: Do LLM agents converge on progressive taxation? Do coalitions form along economic or ideological lines? Can AI agents discover Pareto-improving institutions that real legislatures miss?
+
+## Demo
+
+<div align="center">
+
+[![Watch the demo](https://cdn.loom.com/sessions/thumbnails/f6d5fd52753347e1b55f40d1b00f6306-with-play.gif)](https://www.loom.com/share/f6d5fd52753347e1b55f40d1b00f6306)
+
+</div>
+
 ## Overview
 
-**The Emergent Constitution** combines a rigorous economic model (HANK — Heterogeneous Agent New Keynesian, following Kaplan-Moll-Violante 2018) with LLM-driven agent behavior to study how institutions emerge from individual decision-making. The model features a two-asset structure (liquid bonds + illiquid capital with convex adjustment costs), nominal rigidities (sticky prices, Taylor rule), and a government sector with debt and bond market clearing.
+**The Emergent Constitution** combines a rigorous economic model with LLM-driven agent behavior to study how institutions emerge from individual decision-making. The model features a two-asset structure (liquid bonds + illiquid capital with convex adjustment costs), nominal rigidities (sticky prices, Taylor rule), and a government sector with debt and bond market clearing.
 
 Each citizen-agent (household) has:
 - **Economic state**: wealth (assets), idiosyncratic productivity from a Markov chain
@@ -101,6 +111,16 @@ rye sync
 ```
 
 ## Quick Start
+
+### Dashboard (recommended)
+
+The easiest way to run simulations is through the interactive Streamlit dashboard. It lets you configure all parameters (agents, periods, shocks, production, LLM settings, HANK extensions, etc.), launch a simulation, and watch results stream in real time across three tabs: Economy, Constitution, and Agent Explorer.
+
+```bash
+streamlit run src/emergent_constitution/dashboard/app.py
+```
+
+Open `http://localhost:8501`, adjust parameters in the **Parameters** tab, and click **Run Simulation**. Charts update live as the simulation progresses.
 
 ### CLI Usage
 
@@ -500,6 +520,7 @@ ruff check .     # Lint
 
 ## Documentation
 
+- [Model Paper (PDF)](docs/model_paper.pdf) - *Emergent Constitutions: A Heterogeneous-Agent Model with Endogenous Governance and LLM-Augmented Political Decision Making* (Mele, 2026)
 - [Architecture](docs/architecture.md) - 9-step lifecycle, component interactions, data flow
 - [Data Models](docs/models.md) - Complete reference for v1 and v2 Pydantic models
 - [Configuration](docs/configuration.md) - All configuration fields with examples
