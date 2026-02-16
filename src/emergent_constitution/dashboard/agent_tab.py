@@ -104,6 +104,7 @@ def render_streaming(output: SimulationOutputV2) -> None:
     all_series = _extract_agent_series(output, agent_ids, include_avg=True)
 
     # Show first 3 chart pairs (6 charts)
+    ks = f"_s{len(output.history)}"
     for i in range(0, min(6, len(_CHART_CONFIG)), 2):
         col_l, col_r = st.columns(2)
         metric, title, ylabel = _CHART_CONFIG[i]
@@ -111,6 +112,7 @@ def render_streaming(output: SimulationOutputV2) -> None:
             st.plotly_chart(
                 make_time_series(all_series[metric], periods, title, ylabel),
                 width="stretch",
+                key=f"agent_{metric}{ks}",
             )
         if i + 1 < len(_CHART_CONFIG):
             metric2, title2, ylabel2 = _CHART_CONFIG[i + 1]
@@ -118,6 +120,7 @@ def render_streaming(output: SimulationOutputV2) -> None:
                 st.plotly_chart(
                     make_time_series(all_series[metric2], periods, title2, ylabel2),
                     width="stretch",
+                    key=f"agent_{metric2}{ks}",
                 )
 
 
