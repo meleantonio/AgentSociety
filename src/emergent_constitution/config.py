@@ -97,10 +97,7 @@ class SimulationConfigV2(BaseModel):
     )
     use_bellman_occ_choice: bool = Field(
         default=False,
-        description=(
-            "Use Bellman-based occupational choice "
-            "(REQ-110..114). Default OFF for compat."
-        ),
+        description="Use Bellman-based occupational choice (REQ-110..114). Default OFF for backward compat.",
     )
 
     # --- Production ---
@@ -139,6 +136,13 @@ class SimulationConfigV2(BaseModel):
     observer_interval: int = Field(default=5, ge=1, description="Observation every K periods")
 
     # --- Market clearing ---
+    market_clearing_method: Literal["analytical", "walrasian"] = Field(
+        default="analytical",
+        description=(
+            "Market clearing algorithm. 'analytical' uses representative-firm FOCs (backward compat). "
+            "'walrasian' uses bisection on excess labor demand with heterogeneous firms (REQ-101..106)."
+        ),
+    )
     tatonnement_max_iter: int = Field(
         default=100, ge=1, description="Max iterations for price finding"
     )
@@ -173,6 +177,16 @@ class SimulationConfigV2(BaseModel):
     )
     rd_tfp_improvement_std: float = Field(
         default=0.02, ge=0.0, description="Std of TFP improvement factor"
+    )
+
+    # --- Feature flags ---
+    fix_entrepreneur_budget: bool = Field(
+        default=False,
+        description=(
+            "When True, entrepreneurs receive only firm profit (pi_f) as income, "
+            "not labor income. Their labor supply is excluded from market aggregation. "
+            "Default OFF preserves v2 backward compatibility."
+        ),
     )
 
     @model_validator(mode="after")

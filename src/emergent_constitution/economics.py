@@ -24,7 +24,7 @@ from emergent_constitution.models.constitution import (
 )
 from emergent_constitution.models.decisions import EconomicDecision
 from emergent_constitution.models.firm import FirmState
-from emergent_constitution.models.household import HouseholdState
+from emergent_constitution.models.household import HouseholdState, OccupationalRole
 from emergent_constitution.models.proposal import TradeOffer
 from emergent_constitution.rng import SimulationRNG
 
@@ -247,10 +247,16 @@ def compute_budget(
     interest_rate: float,
     tax: float,
     transfer: float,
+    firm_profit: float | None = None,
 ) -> float:
-    """Available resources: (1 + r) * a + w * z * labor_supply - tax + transfer.
+    """Available resources for household consumption/savings decisions.
 
-    This is the maximum the agent can consume (saving nothing).
+    Workers:       (1 + r) * a + w * z * labor_supply - tax + transfer
+    Entrepreneurs: (1 + r) * a + pi_f - tax + transfer  (when firm_profit is set)
+
+    When ``firm_profit`` is provided and the agent is an entrepreneur, the
+    budget uses firm profit instead of labor income. This implements the
+    corrected entrepreneur budget constraint (REQ-107).
 
     Args:
         agent: Household state.
@@ -258,15 +264,24 @@ def compute_budget(
         interest_rate: Market interest rate r_t.
         tax: Tax amount for this agent.
         transfer: Transfer amount for this agent.
+        firm_profit: If not None and agent is an entrepreneur, use this
+            instead of labor income.
 
     Returns:
         Total available budget.
 
-    Implements REQ-003.
+    Implements REQ-003, REQ-107.
     """
-    labor_income = wage * agent.productivity * agent.labor_supply
     asset_income = (1.0 + interest_rate) * agent.wealth
-    return asset_income + labor_income - tax + transfer
+
+    if firm_profit is not None and agent.role == OccupationalRole.ENTREPRENEUR:
+        # Entrepreneur budget: a' = (1+r)*a + pi_f - c - T(pi_f) + Tr
+        earned_income = firm_profit
+    else:
+        # Worker budget: a' = (1+r)*a + w*z*(1-l) - c - T(y) + Tr
+        earned_income = wage * agent.productivity * agent.labor_supply
+
+    return asset_income + earned_income - tax + transfer
 
 
 def produce_output(firm: FirmState, alpha: float) -> float:
