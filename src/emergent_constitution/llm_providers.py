@@ -448,7 +448,7 @@ class OpenAICompatibleProvider:
     """
 
     def __init__(self, config: SimulationConfig) -> None:
-        self._model: str = getattr(config, "llm_model", "lmstudio-community/gpt-oss-20b-GGUF")
+        self._model: str = getattr(config, "llm_model", "deepseek/deepseek-r1-0528-qwen3-8b")
         self._temperature: float = getattr(config, "llm_temperature", 0.0)
         self._base_url: str = getattr(config, "llm_base_url", "http://localhost:1234/v1")
         self._client = httpx.Client(base_url=self._base_url, timeout=30.0)

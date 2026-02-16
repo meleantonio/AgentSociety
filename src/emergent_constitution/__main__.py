@@ -180,7 +180,7 @@ def build_parser_v2() -> argparse.ArgumentParser:
     parser.add_argument(
         "--llm-model",
         type=str,
-        default="lmstudio-community/gpt-oss-20b-GGUF",
+        default="deepseek/deepseek-r1-0528-qwen3-8b",
         help="LLM model ID",
     )
     parser.add_argument(
