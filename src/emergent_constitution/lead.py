@@ -32,6 +32,7 @@ from emergent_constitution.economics import (
     produce_output,
     validate_household_states,
 )
+from emergent_constitution.egm_solver import EGMSolver
 from emergent_constitution.entrepreneurial_solver import EntrepreneurialSolver
 from emergent_constitution.initialization import initialize_simulation, initialize_simulation_v2
 from emergent_constitution.llm_citizen import CitizenLLM, PromptBuilder
@@ -450,19 +451,11 @@ class LeadV2:
         # Decision engine: LLM or numerical solver
         if config.benchmark_mode or not config.use_llm:
             self._llm_engine: LLMDecisionEngine | None = None
-            self._solver = NumericalSolver(
-                config=config,
-                productivity_grid=period_state.shocks.productivity_grid,
-                transition_matrix=period_state.shocks.transition_matrix,
-            )
+            self._solver = self._create_solver(config, period_state)
         else:
             # LLMDecisionEngine accepts duck-typed config (uses getattr for v2 fields)
             self._llm_engine = LLMDecisionEngine(config=config, rng=self.rng)  # type: ignore[arg-type]
-            self._solver = NumericalSolver(
-                config=config,
-                productivity_grid=period_state.shocks.productivity_grid,
-                transition_matrix=period_state.shocks.transition_matrix,
-            )
+            self._solver = self._create_solver(config, period_state)
 
         # Entrepreneurial solver (used in both benchmark and LLM modes)
         self._entre_solver = EntrepreneurialSolver(
@@ -746,12 +739,16 @@ class LeadV2:
                 constitution=constitution,
             )
         else:
-            # Benchmark mode: solver-driven entrepreneurial decisions with utility comparison
+            # Benchmark mode: solver-driven entrepreneurial decisions
             entre_public_goods = self.constitution_engine.enforce_public_goods(
                 constitution, 0.0, len(households)
             )
+            # Pass VFI value function for Bellman occ choice (REQ-110)
+            vfi_vf, vfi_ag = self._solver.get_value_function()
             entre_decisions = self._entre_solver.solve_all(
-                households, firms, market, public_goods=entre_public_goods
+                households, firms, market,
+                public_goods=entre_public_goods,
+                vfi_value_func=vfi_vf, a_grid=vfi_ag,
             )
 
         log.debug(
@@ -1249,6 +1246,35 @@ class LeadV2:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _create_solver(
+        config: SimulationConfigV2,
+        period_state: PeriodState,
+    ) -> NumericalSolver | EGMSolver:
+        """Create the appropriate household solver based on config.solver_method.
+
+        Args:
+            config: Simulation configuration.
+            period_state: Initial period state (for grids).
+
+        Returns:
+            NumericalSolver or EGMSolver instance.
+
+        Implements REQ-120 (EGM default, VFI fallback).
+        """
+        if config.solver_method == "egm":
+            return EGMSolver(
+                config=config,
+                productivity_grid=period_state.shocks.productivity_grid,
+                transition_matrix=period_state.shocks.transition_matrix,
+            )
+        # "vfi" and "vfi_numpy" both use NumericalSolver (numpy-vectorized VFI)
+        return NumericalSolver(
+            config=config,
+            productivity_grid=period_state.shocks.productivity_grid,
+            transition_matrix=period_state.shocks.transition_matrix,
+        )
 
     def _get_tax_rate(self, constitution: ConstitutionV2) -> float:
         """Extract a flat tax rate from the constitution.

@@ -95,6 +95,13 @@ class SimulationConfigV2(BaseModel):
     firm_value_horizon: int = Field(
         default=20, ge=1, description="Truncation horizon for firm PDV"
     )
+    use_bellman_occ_choice: bool = Field(
+        default=False,
+        description=(
+            "Use Bellman-based occupational choice "
+            "(REQ-110..114). Default OFF for compat."
+        ),
+    )
 
     # --- Production ---
     alpha: float = Field(default=0.33, gt=0.0, lt=1.0, description="Capital share in Cobb-Douglas")
@@ -150,8 +157,8 @@ class SimulationConfigV2(BaseModel):
 
     # --- Benchmark ---
     benchmark_mode: bool = Field(default=False, description="Numerical-only mode (REQ-037)")
-    solver_method: Literal["vfi", "egm"] = Field(
-        default="egm", description="'vfi' or 'egm' (REQ-036)"
+    solver_method: Literal["vfi", "vfi_numpy", "egm"] = Field(
+        default="egm", description="'vfi', 'vfi_numpy', or 'egm' (REQ-036, REQ-120)"
     )
 
     # --- R&D ---
