@@ -52,10 +52,10 @@ def run_simulation(
                 economy_tab.render(partial_output)
         if constitution_placeholder is not None:
             with constitution_placeholder.container():
-                constitution_tab.render(partial_output)
+                constitution_tab.render_streaming(partial_output)
         if agent_placeholder is not None:
             with agent_placeholder.container():
-                agent_tab.render(partial_output)
+                agent_tab.render_streaming(partial_output)
 
     lead = LeadV2(config)
     output = lead.run(
