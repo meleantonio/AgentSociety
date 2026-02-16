@@ -2,17 +2,19 @@
 
 from __future__ import annotations
 
+import json
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from emergent_constitution.config import SimulationConfig
+from emergent_constitution.config import SimulationConfig, SimulationConfigV2
 from emergent_constitution.llm_providers import (
     AnthropicProvider,
     LLMParseError,
     LLMProvider,
     LLMProviderError,
     MockProvider,
+    OpenAICompatibleProvider,
     compute_cache_key,
     create_provider,
 )
@@ -267,6 +269,141 @@ class TestAnthropicProvider:
 
 
 # ---------------------------------------------------------------------------
+# OpenAICompatibleProvider Tests (mocked HTTP)
+# ---------------------------------------------------------------------------
+
+
+class TestOpenAICompatibleProvider:
+    """Test OpenAICompatibleProvider with mocked httpx client."""
+
+    def _make_httpx_response(self, json_body: dict, status_code: int = 200) -> MagicMock:
+        """Create a mock httpx Response."""
+        resp = MagicMock()
+        resp.status_code = status_code
+        resp.json.return_value = json_body
+        resp.raise_for_status.return_value = None
+        return resp
+
+    def _make_chat_response(self, content: str) -> dict:
+        """Create a mock /chat/completions JSON body."""
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": content,
+                    }
+                }
+            ]
+        }
+
+    def _make_provider(self) -> OpenAICompatibleProvider:
+        """Create an OpenAICompatibleProvider with mocked httpx client."""
+        config = SimulationConfigV2(
+            use_llm=True,
+            llm_provider="local",
+            llm_model="test-model",
+            llm_base_url="http://localhost:9999/v1",
+        )
+        with patch("emergent_constitution.llm_providers.httpx") as mock_httpx:
+            mock_client = MagicMock()
+            mock_httpx.Client.return_value = mock_client
+            # Connectivity check succeeds
+            mock_client.get.return_value = self._make_httpx_response({"data": []})
+            provider = OpenAICompatibleProvider(config)
+        return provider
+
+    def test_schema_prompt_generation(self) -> None:
+        """_build_schema_prompt produces valid instructions with field names."""
+        provider = self._make_provider()
+        prompt = provider._build_schema_prompt(EconomicDecision)
+        assert "EconomicDecision" in prompt
+        assert "consumption" in prompt
+        assert "leisure" in prompt
+        assert "JSON" in prompt
+
+    def test_generate_success(self) -> None:
+        """Valid JSON response is parsed and validated correctly."""
+        provider = self._make_provider()
+
+        valid_json = json.dumps({"consumption": 75.0, "leisure": 0.4})
+        provider._client.post.return_value = self._make_httpx_response(
+            self._make_chat_response(valid_json)
+        )
+
+        messages = [{"role": "user", "content": "Make a decision."}]
+        result = provider.generate(messages, EconomicDecision)
+        parsed = EconomicDecision.model_validate_json(result)
+        assert parsed.consumption == 75.0
+        assert parsed.leisure == 0.4
+
+    def test_generate_parse_retry(self) -> None:
+        """Bad JSON responses trigger retries, success on third attempt."""
+        provider = self._make_provider()
+
+        bad_resp = self._make_httpx_response(self._make_chat_response("not valid json {{{"))
+        good_json = json.dumps({"consumption": 50.0, "leisure": 0.3})
+        good_resp = self._make_httpx_response(self._make_chat_response(good_json))
+        provider._client.post.side_effect = [bad_resp, bad_resp, good_resp]
+
+        messages = [{"role": "user", "content": "Decide."}]
+        result = provider.generate(messages, EconomicDecision)
+        parsed = EconomicDecision.model_validate_json(result)
+        assert parsed.consumption == 50.0
+
+    def test_generate_all_retries_fail(self) -> None:
+        """All retries failing raises LLMParseError."""
+        provider = self._make_provider()
+
+        bad_resp = self._make_httpx_response(self._make_chat_response("not json"))
+        provider._client.post.return_value = bad_resp
+
+        messages = [{"role": "user", "content": "Decide."}]
+        with pytest.raises(LLMParseError, match="Failed to parse valid JSON"):
+            provider.generate(messages, EconomicDecision)
+
+    def test_generate_batch(self) -> None:
+        """Batch calls generate() sequentially."""
+        provider = self._make_provider()
+
+        json1 = json.dumps({"consumption": 10.0, "leisure": 0.1})
+        json2 = json.dumps({"consumption": 20.0, "leisure": 0.2})
+        provider._client.post.side_effect = [
+            self._make_httpx_response(self._make_chat_response(json1)),
+            self._make_httpx_response(self._make_chat_response(json2)),
+        ]
+
+        batch = [
+            [{"role": "user", "content": "Agent 0"}],
+            [{"role": "user", "content": "Agent 1"}],
+        ]
+        results = provider.generate_batch(batch, EconomicDecision)
+        assert len(results) == 2
+        p0 = EconomicDecision.model_validate_json(results[0])
+        p1 = EconomicDecision.model_validate_json(results[1])
+        assert p0.consumption == 10.0
+        assert p1.consumption == 20.0
+
+    def test_connectivity_warning_does_not_crash(self) -> None:
+        """Provider initializes even when server is unreachable."""
+        config = SimulationConfigV2(
+            use_llm=True,
+            llm_provider="local",
+            llm_model="test-model",
+            llm_base_url="http://localhost:9999/v1",
+        )
+        with patch("emergent_constitution.llm_providers.httpx") as mock_httpx:
+            mock_client = MagicMock()
+            mock_httpx.Client.return_value = mock_client
+            # Connectivity check fails
+            mock_client.get.side_effect = ConnectionError("refused")
+            provider = OpenAICompatibleProvider(config)
+
+        # Provider should exist even though connectivity failed
+        assert provider._model == "test-model"
+
+
+# ---------------------------------------------------------------------------
 # Factory Tests
 # ---------------------------------------------------------------------------
 
@@ -301,6 +438,48 @@ class TestCreateProvider:
         except ImportError:
             provider = create_provider(config, rng)
             assert isinstance(provider, MockProvider)
+
+    def test_factory_creates_local_provider(self, rng: SimulationRNG) -> None:
+        """create_provider with llm_provider='local' creates OpenAICompatibleProvider."""
+        config = SimulationConfigV2(
+            use_llm=True,
+            llm_provider="local",
+            llm_base_url="http://localhost:9999/v1",
+        )
+        with patch("emergent_constitution.llm_providers.httpx") as mock_httpx:
+            mock_client = MagicMock()
+            mock_httpx.Client.return_value = mock_client
+            mock_client.get.return_value = MagicMock(status_code=200)
+            mock_client.get.return_value.raise_for_status.return_value = None
+            provider = create_provider(config, rng)
+        assert isinstance(provider, OpenAICompatibleProvider)
+
+    def test_factory_local_fallback_to_mock(self, rng: SimulationRNG) -> None:
+        """create_provider falls back to MockProvider when local server is unreachable."""
+        config = SimulationConfigV2(
+            use_llm=True,
+            llm_provider="local",
+            llm_base_url="http://localhost:9999/v1",
+        )
+        with patch("emergent_constitution.llm_providers.httpx") as mock_httpx:
+            mock_httpx.Client.side_effect = Exception("httpx unavailable")
+            provider = create_provider(config, rng)
+        assert isinstance(provider, MockProvider)
+
+    def test_factory_ollama_creates_local_provider(self, rng: SimulationRNG) -> None:
+        """Alias 'ollama' also creates OpenAICompatibleProvider."""
+        config = SimulationConfigV2(
+            use_llm=True,
+            llm_provider="ollama",
+            llm_base_url="http://localhost:11434/v1",
+        )
+        with patch("emergent_constitution.llm_providers.httpx") as mock_httpx:
+            mock_client = MagicMock()
+            mock_httpx.Client.return_value = mock_client
+            mock_client.get.return_value = MagicMock(status_code=200)
+            mock_client.get.return_value.raise_for_status.return_value = None
+            provider = create_provider(config, rng)
+        assert isinstance(provider, OpenAICompatibleProvider)
 
 
 # ---------------------------------------------------------------------------

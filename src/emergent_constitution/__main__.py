@@ -176,12 +176,18 @@ def build_parser_v2() -> argparse.ArgumentParser:
     )
 
     # LLM settings
-    parser.add_argument("--llm-provider", type=str, default="anthropic", help="LLM provider")
+    parser.add_argument("--llm-provider", type=str, default="local", help="LLM provider")
     parser.add_argument(
         "--llm-model",
         type=str,
-        default="claude-sonnet-4-5-20250929",
+        default="lmstudio-community/gpt-oss-20b-GGUF",
         help="LLM model ID",
+    )
+    parser.add_argument(
+        "--llm-base-url",
+        type=str,
+        default="http://localhost:1234/v1",
+        help="Base URL for OpenAI-compatible local model server",
     )
 
     # Output
@@ -221,6 +227,7 @@ def run_simulation_v2(args: argparse.Namespace) -> str:
         benchmark_mode=args.benchmark,
         llm_provider=args.llm_provider,
         llm_model=args.llm_model,
+        llm_base_url=args.llm_base_url,
         homogeneous_preferences=not args.heterogeneous,
         utility_alpha=args.utility_alpha,
         utility_beta=args.utility_beta,

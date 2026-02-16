@@ -40,8 +40,9 @@ class TestBuildParserV2:
         assert args.proposal_interval == 5
         assert args.observer_interval == 5
         assert args.benchmark is False
-        assert args.llm_provider == "anthropic"
-        assert args.llm_model == "claude-sonnet-4-5-20250929"
+        assert args.llm_provider == "local"
+        assert args.llm_model == "lmstudio-community/gpt-oss-20b-GGUF"
+        assert args.llm_base_url == "http://localhost:1234/v1"
         assert args.output is None
         assert args.json_output is False
         assert args.quiet is False
