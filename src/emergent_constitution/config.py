@@ -155,8 +155,12 @@ class SimulationConfigV2(BaseModel):
 
     # --- LLM ---
     use_llm: bool = Field(default=True, description="Default: LLM-driven (REQ-024)")
-    llm_provider: str = Field(default="anthropic", description="Provider name")
-    llm_model: str = Field(default="claude-sonnet-4-5-20250929", description="Model ID")
+    llm_provider: str = Field(default="local", description="Provider name")
+    llm_model: str = Field(default="lmstudio-community/gpt-oss-20b-GGUF", description="Model ID")
+    llm_base_url: str = Field(
+        default="http://localhost:1234/v1",
+        description="Base URL for OpenAI-compatible local model server.",
+    )
     llm_temperature: float = Field(
         default=0.0, ge=0.0, le=2.0, description="Determinism (PROP-001)"
     )
@@ -313,6 +317,14 @@ class SimulationConfigV2(BaseModel):
             "When True, entrepreneurs receive only firm profit (pi_f) as income, "
             "not labor income. Their labor supply is excluded from market aggregation. "
             "Default OFF preserves v2 backward compatibility."
+        ),
+    )
+    record_agent_snapshots: bool = Field(
+        default=False,
+        description=(
+            "When True, observer records full HouseholdState snapshots at each "
+            "observation interval. Used by the dashboard for per-agent time series. "
+            "Default OFF to preserve memory efficiency for CLI usage."
         ),
     )
 

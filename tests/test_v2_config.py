@@ -37,7 +37,9 @@ class TestSimulationConfigV2Defaults:
 
     def test_llm_defaults(self) -> None:
         config = SimulationConfigV2()
-        assert config.llm_provider == "anthropic"
+        assert config.llm_provider == "local"
+        assert config.llm_model == "lmstudio-community/gpt-oss-20b-GGUF"
+        assert config.llm_base_url == "http://localhost:1234/v1"
         assert config.llm_temperature == 0.0
         assert config.llm_batch_size == 10
         assert config.llm_cache_enabled is True

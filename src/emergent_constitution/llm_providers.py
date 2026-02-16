@@ -1,8 +1,9 @@
 """LLM provider abstraction — pluggable interface for decision generation.
 
-Provides a protocol for LLM-based decision making and two implementations:
+Provides a protocol for LLM-based decision making and three implementations:
 - MockProvider: deterministic mock for testing (no API calls)
 - AnthropicProvider: Anthropic Messages API with structured output
+- OpenAICompatibleProvider: OpenAI-compatible local servers (LM Studio, Ollama, vLLM, llama.cpp)
 
 Traceability: REQ-024, REQ-027, REQ-029, PROP-001
 """
@@ -14,6 +15,7 @@ import json
 import time
 from typing import Any, Protocol, runtime_checkable
 
+import httpx
 import structlog
 from pydantic import BaseModel, ValidationError
 
@@ -429,6 +431,197 @@ class AnthropicProvider:
 
 
 # ---------------------------------------------------------------------------
+# OpenAICompatibleProvider
+# ---------------------------------------------------------------------------
+
+_LOCAL_MAX_RETRIES = 3
+
+
+class OpenAICompatibleProvider:
+    """LLM provider for OpenAI-compatible local servers (LM Studio, Ollama, vLLM, llama.cpp).
+
+    Uses httpx to call /chat/completions. Structured output via JSON schema in
+    system prompt + response_format=json_object.
+
+    Args:
+        config: Simulation configuration with LLM parameters.
+    """
+
+    def __init__(self, config: SimulationConfig) -> None:
+        self._model: str = getattr(config, "llm_model", "lmstudio-community/gpt-oss-20b-GGUF")
+        self._temperature: float = getattr(config, "llm_temperature", 0.0)
+        self._base_url: str = getattr(config, "llm_base_url", "http://localhost:1234/v1")
+        self._client = httpx.Client(base_url=self._base_url, timeout=30.0)
+
+        # Test connectivity (warn but don't crash)
+        try:
+            resp = self._client.get("/models")
+            resp.raise_for_status()
+            log.info(
+                "openai_compatible_provider.initialized",
+                model=self._model,
+                base_url=self._base_url,
+            )
+        except Exception as exc:
+            log.warning(
+                "openai_compatible_provider.connectivity_warning",
+                base_url=self._base_url,
+                error=str(exc),
+            )
+
+    def generate(
+        self,
+        messages: list[dict[str, str]],
+        schema: type[BaseModel],
+    ) -> str:
+        """Generate a single response via an OpenAI-compatible /chat/completions endpoint.
+
+        Args:
+            messages: Chat messages with 'role' and 'content' keys.
+            schema: Pydantic model class for structured output.
+
+        Returns:
+            JSON string conforming to the schema.
+
+        Raises:
+            LLMProviderError: On unrecoverable failure after retries.
+        """
+        schema_prompt = self._build_schema_prompt(schema)
+        augmented_messages = [
+            {"role": "system", "content": schema_prompt},
+            *messages,
+        ]
+
+        last_error: Exception | None = None
+        for attempt in range(1, _LOCAL_MAX_RETRIES + 1):
+            try:
+                raw_text = self._call_api(augmented_messages, json_mode=True)
+                data = json.loads(raw_text)
+                validated = schema.model_validate(data)
+                return validated.model_dump_json()
+            except (json.JSONDecodeError, ValidationError) as exc:
+                last_error = exc
+                log.warning(
+                    "openai_compatible_provider.parse_retry",
+                    attempt=attempt,
+                    error=str(exc),
+                )
+
+        raise LLMParseError(
+            f"Failed to parse valid JSON after {_LOCAL_MAX_RETRIES} retries: {last_error}"
+        )
+
+    def generate_batch(
+        self,
+        batch: list[list[dict[str, str]]],
+        schema: type[BaseModel],
+    ) -> list[str]:
+        """Generate responses for a batch of message sequences.
+
+        Calls generate() sequentially for each message sequence.
+
+        Args:
+            batch: List of message sequences.
+            schema: Pydantic model class for response validation.
+
+        Returns:
+            List of JSON strings, one per input sequence.
+        """
+        results: list[str] = []
+        for messages in batch:
+            try:
+                result = self.generate(messages, schema)
+                results.append(result)
+            except LLMProviderError as exc:
+                log.warning(
+                    "openai_compatible_provider.batch_item_failed",
+                    error=str(exc),
+                )
+                results.append("{}")
+        return results
+
+    def _build_schema_prompt(self, schema: type[BaseModel]) -> str:
+        """Convert a Pydantic schema to human-readable JSON schema instructions.
+
+        Args:
+            schema: Pydantic model class.
+
+        Returns:
+            System prompt string instructing the model to output valid JSON.
+        """
+        json_schema = schema.model_json_schema()
+        properties = json_schema.get("properties", {})
+        required = json_schema.get("required", [])
+
+        lines = [
+            "You MUST respond with a single valid JSON object conforming to the following schema.",
+            "Do NOT include any text outside the JSON object.",
+            "",
+            f"Schema: {schema.__name__}",
+            f"Description: {schema.__doc__ or 'N/A'}",
+            "",
+            "Fields:",
+        ]
+        for field_name, field_info in properties.items():
+            field_type = field_info.get("type", field_info.get("anyOf", "unknown"))
+            desc = field_info.get("description", "")
+            default = field_info.get("default", "REQUIRED" if field_name in required else "N/A")
+            lines.append(f"  - {field_name} ({field_type}): {desc} [default: {default}]")
+
+        example_obj = {}
+        for field_name, field_info in properties.items():
+            if "default" in field_info:
+                example_obj[field_name] = field_info["default"]
+            elif field_info.get("type") == "number":
+                example_obj[field_name] = 0.0
+            elif field_info.get("type") == "string":
+                example_obj[field_name] = ""
+            elif field_info.get("type") == "boolean":
+                example_obj[field_name] = False
+            else:
+                example_obj[field_name] = None
+
+        lines.append("")
+        lines.append(f"Example: {json.dumps(example_obj)}")
+
+        return "\n".join(lines)
+
+    def _call_api(self, messages: list[dict[str, str]], json_mode: bool = True) -> str:
+        """POST to /chat/completions and return the content text.
+
+        Args:
+            messages: Chat messages for the API call.
+            json_mode: Whether to request response_format=json_object.
+
+        Returns:
+            The text content of the first choice.
+
+        Raises:
+            LLMProviderError: On HTTP or parsing errors.
+        """
+        payload: dict[str, Any] = {
+            "model": self._model,
+            "messages": messages,
+            "temperature": self._temperature,
+            "max_tokens": 1024,
+        }
+        if json_mode:
+            payload["response_format"] = {"type": "json_object"}
+
+        try:
+            resp = self._client.post("/chat/completions", json=payload)
+            resp.raise_for_status()
+        except Exception as exc:
+            raise LLMProviderError(f"OpenAI-compatible API call failed: {exc}") from exc
+
+        try:
+            body = resp.json()
+            return body["choices"][0]["message"]["content"]
+        except (KeyError, IndexError, json.JSONDecodeError) as exc:
+            raise LLMParseError(f"Unexpected response format: {exc}") from exc
+
+
+# ---------------------------------------------------------------------------
 # Factory
 # ---------------------------------------------------------------------------
 
@@ -468,6 +661,17 @@ def create_provider(
                 "provider.anthropic_fallback_to_mock",
                 error=str(exc),
                 reason="Failed to create AnthropicProvider; falling back to MockProvider",
+            )
+            return MockProvider(rng=rng, config=config)
+
+    if provider_name in ("local", "openai", "openai_compatible", "lmstudio", "ollama", "vllm"):
+        try:
+            return OpenAICompatibleProvider(config=config)
+        except (LLMProviderError, Exception) as exc:
+            log.warning(
+                "provider.local_fallback_to_mock",
+                error=str(exc),
+                reason="Failed to create OpenAICompatibleProvider; falling back to MockProvider",
             )
             return MockProvider(rng=rng, config=config)
 
