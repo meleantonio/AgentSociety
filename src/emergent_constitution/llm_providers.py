@@ -453,7 +453,7 @@ class OpenAICompatibleProvider:
         self._base_url: str = getattr(config, "llm_base_url", "http://localhost:1234/v1")
         self._client = httpx.Client(base_url=self._base_url, timeout=30.0)
 
-        # Test connectivity (warn but don't crash)
+        # Test connectivity (raise on failure so factory can fall back)
         try:
             resp = self._client.get("/models")
             resp.raise_for_status()
@@ -464,10 +464,13 @@ class OpenAICompatibleProvider:
             )
         except Exception as exc:
             log.warning(
-                "openai_compatible_provider.connectivity_warning",
+                "openai_compatible_provider.connectivity_failed",
                 base_url=self._base_url,
                 error=str(exc),
             )
+            raise LLMProviderError(
+                f"Local LLM server unreachable at {self._base_url}: {exc}"
+            ) from exc
 
     def generate(
         self,

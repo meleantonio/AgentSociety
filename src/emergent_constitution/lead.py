@@ -12,6 +12,7 @@ Traceability: REQ-033
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 
 import numpy as np
 import structlog
@@ -40,7 +41,6 @@ from emergent_constitution.initialization import initialize_simulation, initiali
 from emergent_constitution.llm_citizen import CitizenLLM, PromptBuilder
 from emergent_constitution.llm_engine import LLMDecisionEngine
 from emergent_constitution.market_clearing import clear_markets
-from emergent_constitution.nominal import NominalBlock, NominalState
 from emergent_constitution.models.agent import AgentState
 from emergent_constitution.models.constitution import Constitution, ConstitutionV2
 from emergent_constitution.models.decisions import (
@@ -65,6 +65,7 @@ from emergent_constitution.models.proposal import (
 )
 from emergent_constitution.models.shocks import ShockState
 from emergent_constitution.models.tick import TickState
+from emergent_constitution.nominal import NominalBlock, NominalState
 from emergent_constitution.numerical_solver import NumericalSolver
 from emergent_constitution.observer import ObserverV2, observe_tick
 from emergent_constitution.rng import SimulationRNG
@@ -508,8 +509,20 @@ class LeadV2:
             use_llm=config.use_llm,
         )
 
-    def run(self) -> SimulationOutputV2:
+    def run(
+        self,
+        progress_callback: Callable[[int, int], None] | None = None,
+        observe_callback: Callable[[SimulationOutputV2], None] | None = None,
+    ) -> SimulationOutputV2:
         """Execute all periods and return the final simulation output.
+
+        Args:
+            progress_callback: Optional callback invoked after each period with
+                (current_period, total_periods). Used by the dashboard for
+                progress bar updates.
+            observe_callback: Optional callback invoked at each observer interval
+                with a partial SimulationOutputV2 snapshot. Used by the dashboard
+                to stream intermediate results to the UI.
 
         Returns:
             SimulationOutputV2 with final state, history, and welfare summary.
@@ -518,6 +531,11 @@ class LeadV2:
 
         for t in range(1, self.config.max_periods + 1):
             self.period_state = self._advance_period(t)
+            if progress_callback is not None:
+                progress_callback(t, self.config.max_periods)
+            if observe_callback is not None and t % self.config.observer_interval == 0:
+                partial = self.observer.finalize(self.period_state)
+                observe_callback(partial)
 
         log.info("simulation_v2.completed", total_periods=self.config.max_periods)
 

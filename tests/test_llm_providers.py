@@ -384,8 +384,8 @@ class TestOpenAICompatibleProvider:
         assert p0.consumption == 10.0
         assert p1.consumption == 20.0
 
-    def test_connectivity_warning_does_not_crash(self) -> None:
-        """Provider initializes even when server is unreachable."""
+    def test_connectivity_failure_raises(self) -> None:
+        """Provider raises LLMProviderError when server is unreachable."""
         config = SimulationConfigV2(
             use_llm=True,
             llm_provider="local",
@@ -397,10 +397,8 @@ class TestOpenAICompatibleProvider:
             mock_httpx.Client.return_value = mock_client
             # Connectivity check fails
             mock_client.get.side_effect = ConnectionError("refused")
-            provider = OpenAICompatibleProvider(config)
-
-        # Provider should exist even though connectivity failed
-        assert provider._model == "test-model"
+            with pytest.raises(LLMProviderError, match="unreachable"):
+                OpenAICompatibleProvider(config)
 
 
 # ---------------------------------------------------------------------------
