@@ -74,7 +74,7 @@ class SimulationConfigV2(BaseModel):
     # --- Shock parameters ---
     rho_z: float = Field(default=0.9, gt=0.0, lt=1.0, description="Idiosyncratic persistence")
     sigma_z: float = Field(default=0.2, gt=0.0, description="Idiosyncratic volatility")
-    num_z_states: int = Field(default=5, ge=2, le=50, description="Rouwenhorst grid points")
+    num_z_states: int = Field(default=7, ge=2, le=50, description="Rouwenhorst grid points")
     rho_a: float = Field(default=0.95, gt=0.0, lt=1.0, description="Aggregate TFP persistence")
     sigma_a: float = Field(default=0.01, gt=0.0, description="Aggregate TFP volatility")
     enable_preference_shocks: bool = Field(
@@ -87,7 +87,7 @@ class SimulationConfigV2(BaseModel):
     )
     sigma_e: float = Field(default=0.3, gt=0.0, description="Entrepreneurial ability volatility")
     num_e_states: int = Field(
-        default=5, ge=2, le=50, description="Rouwenhorst grid points for ability"
+        default=7, ge=2, le=50, description="Rouwenhorst grid points for ability"
     )
     firm_entry_cost: float = Field(
         default=5.0, gt=0.0, description="Fixed cost to create a firm (sunk)"
@@ -181,6 +181,26 @@ class SimulationConfigV2(BaseModel):
     )
     rd_tfp_improvement_std: float = Field(
         default=0.02, ge=0.0, description="Std of TFP improvement factor"
+    )
+
+    # --- Distribution mode (Phase 2: KFE) ---
+    distribution_mode: Literal["individual", "kfe"] = Field(
+        default="individual",
+        description=(
+            "'individual' tracks N individual agents (default, backward compat). "
+            "'kfe' uses Kolmogorov Forward Equation distribution tracking "
+            "(REQ-201..205). Feature-gated: default OFF."
+        ),
+    )
+    kfe_convergence_tolerance: float = Field(
+        default=1e-10,
+        gt=0.0,
+        description="L1 convergence tolerance for stationary KFE distribution (REQ-205).",
+    )
+    kfe_max_iterations: int = Field(
+        default=10_000,
+        ge=1,
+        description="Maximum iterations for KFE stationary distribution (REQ-205).",
     )
 
     # --- Feature flags ---

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
 import structlog
 
 from emergent_constitution.citizen import decide_proposal, decide_trade, decide_votes
@@ -62,7 +63,6 @@ from emergent_constitution.models.proposal import (
 )
 from emergent_constitution.models.shocks import ShockState
 from emergent_constitution.models.tick import TickState
-from emergent_constitution.egm_solver import EGMSolver
 from emergent_constitution.numerical_solver import NumericalSolver
 from emergent_constitution.observer import ObserverV2, observe_tick
 from emergent_constitution.rng import SimulationRNG
@@ -553,10 +553,7 @@ class LeadV2:
 
         for h in households:
             decision = econ_decisions.get(h.id, EconomicDecision(consumption=0.0, leisure=0.5))
-            if (
-                self.config.fix_entrepreneur_budget
-                and h.role == OccupationalRole.ENTREPRENEUR
-            ):
+            if self.config.fix_entrepreneur_budget and h.role == OccupationalRole.ENTREPRENEUR:
                 # Entrepreneurs do not supply labor; income = firm profit only
                 h.labor_supply = 0.0
                 h.income = _firm_profit_by_owner.get(h.id, 0.0)
@@ -770,8 +767,12 @@ class LeadV2:
             # Pass VFI value function for Bellman-based occupational choice (REQ-110)
             vfi_value_func, vfi_a_grid = self._solver.get_value_function()
             entre_decisions = self._entre_solver.solve_all(
-                households, firms, market, public_goods=entre_public_goods,
-                vfi_value_func=vfi_value_func, a_grid=vfi_a_grid,
+                households,
+                firms,
+                market,
+                public_goods=entre_public_goods,
+                vfi_value_func=vfi_value_func,
+                a_grid=vfi_a_grid,
             )
 
         log.debug(
@@ -821,10 +822,7 @@ class LeadV2:
         constrained: dict[str, EconomicDecision] = {}
         for h in households:
             decision = decisions.get(h.id, EconomicDecision(consumption=0.0, leisure=0.5))
-            if (
-                self.config.fix_entrepreneur_budget
-                and h.role == OccupationalRole.ENTREPRENEUR
-            ):
+            if self.config.fix_entrepreneur_budget and h.role == OccupationalRole.ENTREPRENEUR:
                 # Entrepreneur income = firm profit only (no labor income)
                 income = _firm_profit_by_owner.get(h.id, 0.0)
             else:
@@ -832,7 +830,11 @@ class LeadV2:
             tax = income * tax_rate
             transfer = 0.0  # Conservative; actual transfers computed in step 6
             budget = compute_budget(
-                h, market.wage, market.interest_rate, tax, transfer,
+                h,
+                market.wage,
+                market.interest_rate,
+                tax,
+                transfer,
                 firm_profit=_firm_profit_by_owner.get(h.id, 0.0)
                 if self.config.fix_entrepreneur_budget
                 else None,
@@ -1208,10 +1210,7 @@ class LeadV2:
             # Add firm profit for entrepreneurs
             firm_profit = firm_profit_by_owner.get(h.id, 0.0)
 
-            if (
-                self.config.fix_entrepreneur_budget
-                and h.id in owners_with_firms
-            ):
+            if self.config.fix_entrepreneur_budget and h.id in owners_with_firms:
                 # Entrepreneurs are residual claimants: income = pi_f only.
                 # Their labor is embedded in firm production, not separately
                 # compensated at market wage. Labor supply = 0.
@@ -1274,6 +1273,102 @@ class LeadV2:
         )
 
         return updated
+
+    # ------------------------------------------------------------------
+    # Step 8b: Update KFE distribution (Phase 2, REQ-201..205)
+    # ------------------------------------------------------------------
+
+    def _update_distribution(
+        self,
+        econ_decisions: dict[str, EconomicDecision],
+        households: list[HouseholdState],
+        market: MarketState,
+    ) -> None:
+        """Advance KFE distribution one period using current policy.
+
+        Constructs the savings policy grid from the solver's policy
+        functions and calls Distribution.forward().
+
+        Args:
+            econ_decisions: Economic decisions (not used directly; policy
+                comes from solver grid).
+            households: Current household states.
+            market: Current market equilibrium.
+        """
+        if self._distribution is None:
+            return
+
+        solver = self._solver
+        a_grid_np = solver._a_grid_np if hasattr(solver, "_a_grid_np") else np.array(solver.a_grid)
+        z_grid_np = (
+            solver._z_grid_np
+            if hasattr(solver, "_z_grid_np")
+            else np.array(solver.productivity_grid)
+        )
+        trans_np = (
+            solver._trans_np
+            if hasattr(solver, "_trans_np")
+            else np.array(solver.transition_matrix)
+        )
+
+        # Build savings policy a'(a, z) on the grid from budget constraint
+        tax_rate = self._get_tax_rate(self.period_state.constitution)
+        n_a = len(a_grid_np)
+        n_z = len(z_grid_np)
+
+        # Get policy functions from the solver (last-solved)
+        ref = households[0].utility_params if households else None
+        if ref is None:
+            return
+
+        def tax_fn(income: float) -> float:
+            return income * tax_rate
+
+        if hasattr(solver, "solve_egm_cached"):
+            # EGM solver path
+            c_policy, lei_policy = solver.solve_egm_cached(
+                alpha_u=ref.alpha,
+                beta_u=ref.beta,
+                gamma_u=ref.gamma,
+                beta_discount=ref.beta_discount,
+                wage=market.wage,
+                interest_rate=market.interest_rate,
+                public_goods=max(1e-10, 0.0),
+                tax_function=tax_fn,
+                transfer=0.0,
+            )
+        else:
+            # VFI solver path
+            c_policy_list, lei_policy_list = solver.solve_vfi_shared(
+                alpha=ref.alpha,
+                beta_param=ref.beta,
+                gamma=ref.gamma,
+                beta_discount=ref.beta_discount,
+                wage=market.wage,
+                interest_rate=market.interest_rate,
+                public_goods=max(1e-10, 0.0),
+                tax_function=tax_fn,
+                transfer=0.0,
+            )
+            c_policy = np.array(c_policy_list)
+            lei_policy = np.array(lei_policy_list)
+
+        # Compute savings policy: a' = (1+r)*a + w*z*(1-l) - c - T(y)
+        a_col = a_grid_np.reshape(n_a, 1)
+        z_row = z_grid_np.reshape(1, n_z)
+        labor = 1.0 - np.asarray(lei_policy)
+        income = market.wage * z_row * labor
+        tax = income * tax_rate
+        policy_savings = (1.0 + market.interest_rate) * a_col + income - tax - np.asarray(c_policy)
+        policy_savings = np.maximum(policy_savings, self.config.a_min)
+
+        self._distribution.forward(policy_savings, trans_np)
+
+        log.debug(
+            "step8b.distribution_updated",
+            mass_total=round(self._distribution.mass_total(), 12),
+            mean_wealth=round(self._distribution.mean_wealth(), 2),
+        )
 
     # ------------------------------------------------------------------
     # Step 9: Observe (REQ-030, REQ-031)

@@ -24,7 +24,7 @@ class TestSimulationConfigV2Defaults:
         config = SimulationConfigV2()
         assert config.rho_z == 0.9
         assert config.sigma_z == 0.2
-        assert config.num_z_states == 5
+        assert config.num_z_states == 7
         assert config.rho_a == 0.95
         assert config.sigma_a == 0.01
         assert config.enable_preference_shocks is False

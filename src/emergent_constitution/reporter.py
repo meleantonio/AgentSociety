@@ -13,6 +13,7 @@ without performing any I/O.
 from __future__ import annotations
 
 import statistics
+from typing import TYPE_CHECKING
 
 from emergent_constitution.citizen import compute_gini
 from emergent_constitution.coalition import compute_coalition_stats
@@ -27,6 +28,9 @@ from emergent_constitution.models.history import (
 )
 from emergent_constitution.models.household import HouseholdState
 from emergent_constitution.observer import compute_pareto_efficiency
+
+if TYPE_CHECKING:
+    from emergent_constitution.calibration import CalibrationTargets
 
 
 def generate_report(output: SimulationOutput) -> str:
@@ -234,11 +238,15 @@ def _format_statistics_evolution(history: list[HistoryEntry]) -> str:
 # ============================================================================
 
 
-def generate_report_v2(output: SimulationOutputV2) -> str:
+def generate_report_v2(
+    output: SimulationOutputV2,
+    calibration_targets: CalibrationTargets | None = None,
+) -> str:
     """Generate a full Markdown report from v2 simulation output.
 
     Args:
         output: Complete v2 simulation output.
+        calibration_targets: Optional calibration targets for moment comparison.
 
     Returns:
         Human-readable Markdown report string.
@@ -249,9 +257,19 @@ def generate_report_v2(output: SimulationOutputV2) -> str:
         _format_wealth_distribution_v2(output.final_households),
         _format_firm_summary(output),
         _format_welfare_summary(output.welfare_summary),
-        _format_constitutional_timeline_v2(output.history),
-        _format_statistics_evolution_v2(output.history),
     ]
+
+    if calibration_targets is not None:
+        sections.append(
+            _format_calibration_comparison(output.final_households, calibration_targets)
+        )
+
+    sections.extend(
+        [
+            _format_constitutional_timeline_v2(output.history),
+            _format_statistics_evolution_v2(output.history),
+        ]
+    )
     return "\n\n".join(sections) + "\n"
 
 
@@ -533,6 +551,32 @@ def _format_constitutional_timeline_v2(history: list[HistoryEntryV2]) -> str:
 
     if not any_activity:
         lines.append("No governance activity during the simulation.")
+
+    return "\n".join(lines)
+
+
+def _format_calibration_comparison(
+    households: list[HouseholdState],
+    targets: CalibrationTargets,
+) -> str:
+    """Format a calibration comparison section showing model vs target moments.
+
+    Args:
+        households: Final household states.
+        targets: Calibration target values.
+
+    Returns:
+        Markdown section with moment comparison table.
+    """
+    from emergent_constitution.calibration import Calibrator
+
+    calibrator = Calibrator()
+    moments = calibrator.compute_model_moments(households)
+
+    lines = [
+        "## Calibration Comparison\n",
+        calibrator.format_comparison(moments, targets),
+    ]
 
     return "\n".join(lines)
 
