@@ -189,11 +189,13 @@ def _household_bond_demand(
 
 
 def clear_bond_market(
-    household_wealths: list[float],
-    government_debt: float,
-    base_interest_rate: float,
+    households: list | None = None,
+    government_debt: float = 0.0,
+    base_interest_rate: float = 0.03,
     tol: float = _BOND_BISECT_TOL,
     max_iter: int = _BOND_BISECT_MAX_ITER,
+    *,
+    household_wealths: list[float] | None = None,
 ) -> tuple[float, float]:
     """Find bond rate r^b that clears the bond market (REQ-307).
 
@@ -201,20 +203,32 @@ def clear_bond_market(
     government bond supply B_t.
 
     Args:
-        household_wealths: List of household wealth values.
+        households: List of HouseholdState objects (wealth extracted automatically).
         government_debt: B_t outstanding government bonds.
         base_interest_rate: Capital market rate r (for demand function).
         tol: Convergence tolerance.
         max_iter: Maximum bisection iterations.
+        household_wealths: Alternative: list of wealth floats directly.
 
     Returns:
         Tuple of (equilibrium bond rate r^b, clearing error).
     """
-    if not household_wealths or government_debt <= 0.0:
+    # Accept either HouseholdState objects or raw wealth floats
+    if household_wealths is not None:
+        wealths = household_wealths
+    elif households is not None:
+        wealths = [
+            getattr(h, "wealth", h) if not isinstance(h, (int, float)) else h
+            for h in households
+        ]
+    else:
+        wealths = []
+
+    if not wealths or government_debt <= 0.0:
         return base_interest_rate, 0.0
 
     def excess_demand(rb: float) -> float:
-        demand = _household_bond_demand(household_wealths, rb, base_interest_rate)
+        demand = _household_bond_demand(wealths, rb, base_interest_rate)
         return demand - government_debt
 
     r_lo = _BOND_RATE_LO

@@ -35,8 +35,7 @@ from emergent_constitution.economics import (
 )
 from emergent_constitution.egm_solver import EGMSolver
 from emergent_constitution.entrepreneurial_solver import EntrepreneurialSolver
-from emergent_constitution.government import Government
-from emergent_constitution.market_clearing import clear_bond_market
+from emergent_constitution.government import Government, clear_bond_market
 from emergent_constitution.initialization import initialize_simulation, initialize_simulation_v2
 from emergent_constitution.llm_citizen import CitizenLLM, PromptBuilder
 from emergent_constitution.llm_engine import LLMDecisionEngine

@@ -183,6 +183,15 @@ class SimulationConfigV2(BaseModel):
         default=0.02, ge=0.0, description="Std of TFP improvement factor"
     )
 
+    # --- Calibration (REQ-208..210) ---
+    calibration_targets: object | None = Field(
+        default=None,
+        description=(
+            "CalibrationTargets instance with empirical moment targets. "
+            "When set, observer logs model-implied moments alongside targets (REQ-210)."
+        ),
+    )
+
     # --- Distribution mode (Phase 2: KFE) ---
     distribution_mode: Literal["individual", "kfe"] = Field(
         default="individual",
@@ -240,6 +249,60 @@ class SimulationConfigV2(BaseModel):
         description=(
             "Borrowing constraint on liquid assets (REQ-304). "
             "Can be negative for unsecured credit."
+        ),
+    )
+
+    # --- Nominal rigidities (Phase 3: HANK, REQ-310..315) ---
+    nominal_rigidities: bool = Field(
+        default=False,
+        description=(
+            "When True, enable New Keynesian sticky prices with Rotemberg "
+            "adjustment costs, Taylor rule, and Fisher equation. Default OFF "
+            "preserves real-economy-only behavior."
+        ),
+    )
+    rotemberg_cost: float = Field(
+        default=100.0, ge=0.0, description="Rotemberg price adjustment cost phi_p (REQ-310)."
+    )
+    taylor_phi_pi: float = Field(
+        default=1.5,
+        gt=1.0,
+        description="Taylor rule inflation coefficient (> 1 for Taylor principle, REQ-312).",
+    )
+    taylor_phi_y: float = Field(
+        default=0.125, ge=0.0, description="Taylor rule output gap coefficient (REQ-312)."
+    )
+    inflation_target: float = Field(
+        default=0.02, description="Target inflation rate pi_bar (REQ-312)."
+    )
+    elasticity_sub: float = Field(
+        default=6.0,
+        gt=1.0,
+        description="Elasticity of substitution between varieties epsilon (REQ-310).",
+    )
+    wage_rigidity: bool = Field(
+        default=False,
+        description="Optional wage Rotemberg adjustment costs (REQ-315).",
+    )
+    rotemberg_wage_cost: float = Field(
+        default=50.0, ge=0.0, description="Rotemberg wage adjustment cost phi_w (REQ-315)."
+    )
+
+    # --- Phase 4: Political utility (REQ-401..405) ---
+    political_lambda: float = Field(
+        default=0.05,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Weight on political utility in the Bellman equation (REQ-401). "
+            "V = u(c,l,G) + lambda * v(C; theta) + beta * E[V']."
+        ),
+    )
+    pure_bellman_politics: bool = Field(
+        default=False,
+        description=(
+            "When True, all political decisions (proposals, votes) are made by "
+            "Bellman value function comparison, bypassing the LLM (REQ-405)."
         ),
     )
 

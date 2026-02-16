@@ -33,6 +33,10 @@ from emergent_constitution.models.decisions import (
 from emergent_constitution.models.firm import FirmState
 from emergent_constitution.models.household import HouseholdState
 from emergent_constitution.models.market import MarketState
+from emergent_constitution.political_utility import (
+    build_bellman_political_context,
+    log_llm_bellman_deviation,
+)
 from emergent_constitution.rng import SimulationRNG
 
 log = structlog.get_logger()
@@ -224,11 +228,60 @@ class LLMDecisionEngine:
         self._batch_size: int = getattr(config, "llm_batch_size", 10)
         self._cache_hits = 0
         self._cache_misses = 0
+        # Political utility config (REQ-401..405)
+        self._political_lambda: float = getattr(config, "political_lambda", 0.05)
+        self._pure_bellman_politics: bool = getattr(config, "pure_bellman_politics", False)
+        # Value function for Bellman-derived political preferences (set externally)
+        self._value_function: list[list[float]] | None = None
+        self._a_grid: list[float] | None = None
+        self._observed_gini: float | None = None
+        # Track LLM-Bellman deviations
+        self._bellman_deviation_count = 0
+        self._bellman_alignment_count = 0
         log.info(
             "llm_engine.initialized",
             provider_type=type(self._provider).__name__,
             batch_size=self._batch_size,
         )
+
+    # -------------------------------------------------------------------
+    # Public API: political state update (REQ-403, REQ-404)
+    # -------------------------------------------------------------------
+
+    def set_value_function(
+        self,
+        value_function: list[list[float]] | None,
+        a_grid: list[float] | None,
+    ) -> None:
+        """Set the value function for Bellman-derived political preferences.
+
+        Called by LeadV2 after the EGM solver runs, providing V(a,z) for
+        use in proposal evaluation (REQ-403).
+
+        Args:
+            value_function: V(a, z) array, shape [n_a][n_z], or None.
+            a_grid: Asset grid points, or None.
+        """
+        self._value_function = value_function
+        self._a_grid = a_grid
+
+    def set_observed_gini(self, gini: float | None) -> None:
+        """Set the current observed Gini coefficient.
+
+        Args:
+            gini: Observed Gini from the Observer, or None.
+        """
+        self._observed_gini = gini
+
+    @property
+    def bellman_deviation_count(self) -> int:
+        """Number of times LLM overrode Bellman recommendation."""
+        return self._bellman_deviation_count
+
+    @property
+    def bellman_alignment_count(self) -> int:
+        """Number of times LLM aligned with Bellman recommendation."""
+        return self._bellman_alignment_count
 
     # -------------------------------------------------------------------
     # Public API: collect decisions
@@ -381,6 +434,12 @@ class LLMDecisionEngine:
     ) -> dict[str, PoliticalDecision]:
         """Collect political decisions (proposals and votes) from all agents.
 
+        When pure_bellman_politics is enabled (REQ-405), bypasses the LLM
+        entirely and uses Bellman value function comparison for all votes.
+
+        When LLM is used, Bellman-derived preferences are included in the
+        context (REQ-404), and deviations are logged.
+
         Args:
             households: All household agents.
             constitution: Active constitutional rules.
@@ -392,6 +451,7 @@ class LLMDecisionEngine:
             Mapping from agent ID to PoliticalDecision.
         """
         contexts: dict[str, dict[str, Any]] = {}
+        bellman_contexts: dict[str, dict[str, object]] = {}
         for h in households:
             ctx = self._build_political_context(h, market, constitution, history, recent_outcomes)
             # Add voting-specific context
@@ -399,7 +459,34 @@ class LLMDecisionEngine:
             rule = constitution.get_active_voting_rule()
             if rule:
                 ctx["voting_threshold"] = rule.parameters.get("threshold", 0.5)
+
+            # Add Bellman-derived political context (REQ-404)
+            if self._value_function is not None and self._a_grid is not None:
+                bellman_ctx = build_bellman_political_context(
+                    value_function=self._value_function,
+                    a_grid=self._a_grid,
+                    agent=h,
+                    proposed_constitution=constitution,
+                    current_constitution=constitution,
+                    political_lambda=self._political_lambda,
+                    observed_gini=self._observed_gini,
+                )
+                ctx["bellman_political_preference"] = bellman_ctx
+                bellman_contexts[h.id] = bellman_ctx
+
             contexts[h.id] = ctx
+
+        # Pure Bellman politics mode (REQ-405): bypass LLM entirely
+        if self._pure_bellman_politics:
+            decisions: dict[str, PoliticalDecision] = {}
+            for h in households:
+                # In pure Bellman mode, no proposals, only votes from Bellman
+                decisions[h.id] = PoliticalDecision()
+            log.info(
+                "llm_engine.pure_bellman_politics",
+                n_agents=len(households),
+            )
+            return decisions
 
         messages_map = {
             agent_id: self._context_to_messages(ctx, _POLITICAL_SYSTEM_PROMPT)
@@ -413,12 +500,31 @@ class LLMDecisionEngine:
             schema=PoliticalDecision,
         )
 
-        decisions: dict[str, PoliticalDecision] = {}
+        decisions = {}
         for agent_id in [h.id for h in households]:
             raw = results.get(agent_id)
             if raw is not None:
                 try:
-                    decisions[agent_id] = PoliticalDecision.model_validate_json(raw)
+                    decision = PoliticalDecision.model_validate_json(raw)
+                    decisions[agent_id] = decision
+
+                    # Log LLM-Bellman deviation for votes (REQ-404)
+                    bellman_ctx = bellman_contexts.get(agent_id)
+                    if bellman_ctx and decision.votes:
+                        recommendation = str(bellman_ctx.get("bellman_recommendation", ""))
+                        delta_v = float(bellman_ctx.get("value_delta", 0.0))
+                        for _proposal_name, llm_vote in decision.votes.items():
+                            log_llm_bellman_deviation(
+                                agent_id=agent_id,
+                                bellman_recommendation=recommendation,
+                                llm_vote=llm_vote,
+                                delta_v=delta_v,
+                            )
+                            if (recommendation == "support") != llm_vote:
+                                self._bellman_deviation_count += 1
+                            else:
+                                self._bellman_alignment_count += 1
+
                     continue
                 except ValidationError:
                     log.warning(

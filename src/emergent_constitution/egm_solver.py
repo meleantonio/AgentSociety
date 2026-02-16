@@ -423,6 +423,7 @@ class EGMSolver:
         public_goods: float,
         tax_function: Callable[[float], float],
         transfer: float,
+        political_flow_bonus: float = 0.0,
     ) -> tuple[np.ndarray, np.ndarray]:
         """Solve for policy functions c(a, z) and l(a, z) via EGM.
 
@@ -438,6 +439,8 @@ class EGMSolver:
             public_goods: Per-capita public goods.
             tax_function: Maps income -> tax amount.
             transfer: Lump-sum transfer.
+            political_flow_bonus: Constant political utility bonus
+                lambda * v(C; theta) added to flow utility (REQ-401).
 
         Returns:
             Tuple of (c_policy, l_policy) arrays, each shape (n_a, n_z).
@@ -656,10 +659,12 @@ class EGMSolver:
         tax_function: Callable[[float], float],
         transfer: float,
         n_iter: int = 200,
+        political_flow_bonus: float = 0.0,
     ) -> list[list[float]]:
         """Compute value function from converged policy functions.
 
-        Iterates the Bellman operator V = u(c,l,G) + beta*E[V(a',z')]
+        Iterates the Bellman operator
+        V = u(c,l,G) + political_flow_bonus + beta*E[V(a',z')]
         using the fixed policy until convergence.
 
         Args:
@@ -672,6 +677,8 @@ class EGMSolver:
             tax_function: Tax function.
             transfer: Lump-sum transfer.
             n_iter: Number of Bellman iterations.
+            political_flow_bonus: Constant political utility bonus
+                lambda * v(C; theta) added to flow utility (REQ-401).
 
         Returns:
             Value function as n_a x n_z list of lists.
@@ -681,10 +688,10 @@ class EGMSolver:
         z_row = self._z_grid_np.reshape(1, self.n_z)
         a_col = self._a_grid_np.reshape(self.n_a, 1)
 
-        # Compute utility at each (a, z)
+        # Compute utility at each (a, z), including political flow bonus (REQ-401)
         c_safe = np.maximum(c_policy, _EPSILON)
         lei_safe = np.maximum(lei_policy, _EPSILON)
-        u_grid = (c_safe**alpha_u) * (lei_safe**beta_u) * (g**gamma_u)
+        u_grid = (c_safe**alpha_u) * (lei_safe**beta_u) * (g**gamma_u) + political_flow_bonus
 
         # Compute a' from policy
         labor = 1.0 - lei_policy
@@ -728,10 +735,15 @@ class EGMSolver:
         public_goods: float,
         tax_function: Callable[[float], float],
         transfer: float,
+        political_flow_bonus: float = 0.0,
     ) -> tuple[np.ndarray, np.ndarray]:
         """Solve EGM with caching on market parameters.
 
         Returns cached results when prices haven't changed.
+
+        Args:
+            political_flow_bonus: Constant political utility bonus
+                lambda * v(C; theta) added to flow utility (REQ-401).
         """
         tax_rate_proxy = tax_function(1.0) if wage > 0 else 0.0
         cache_key = self._make_cache_key(
@@ -746,6 +758,7 @@ class EGMSolver:
         c_policy, lei_policy = self.solve_egm(
             alpha_u, beta_u, gamma_u, beta_discount,
             wage, interest_rate, public_goods, tax_function, transfer,
+            political_flow_bonus=political_flow_bonus,
         )
 
         self._policy_cache[cache_key] = (c_policy, lei_policy)
@@ -754,6 +767,7 @@ class EGMSolver:
         self._last_value_func = self._compute_value_function(
             c_policy, lei_policy, alpha_u, beta_u, gamma_u,
             beta_discount, wage, interest_rate, public_goods, tax_function, transfer,
+            political_flow_bonus=political_flow_bonus,
         )
 
         log.debug(
@@ -783,6 +797,7 @@ class EGMSolver:
         constitution_tax_rate: float = 0.0,
         public_goods: float = 0.0,
         transfer: float = 0.0,
+        political_flow_bonus: float = 0.0,
     ) -> dict[str, EconomicDecision]:
         """Solve for all households using EGM.
 
@@ -797,11 +812,13 @@ class EGMSolver:
             constitution_tax_rate: Flat tax rate from constitution.
             public_goods: Per-capita public goods G_t.
             transfer: Lump-sum transfer per agent.
+            political_flow_bonus: Constant political utility bonus
+                lambda * v(C; theta) added to flow utility (REQ-401).
 
         Returns:
             Dict mapping agent_id -> EconomicDecision.
 
-        Implements REQ-115, REQ-120.
+        Implements REQ-115, REQ-120, REQ-401.
         """
 
         def tax_function(income: float) -> float:
@@ -828,6 +845,7 @@ class EGMSolver:
                 public_goods=public_goods,
                 tax_function=tax_function,
                 transfer=transfer,
+                political_flow_bonus=political_flow_bonus,
             )
             for h in households:
                 consumption = self._interpolate_policy(h.wealth, h.productivity_index, c_policy)
@@ -847,6 +865,7 @@ class EGMSolver:
                     public_goods=public_goods,
                     tax_function=tax_function,
                     transfer=transfer,
+                    political_flow_bonus=political_flow_bonus,
                 )
                 consumption = self._interpolate_policy(
                     h.wealth, h.productivity_index, c_policy
