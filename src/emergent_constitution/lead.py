@@ -35,6 +35,7 @@ from emergent_constitution.economics import (
 )
 from emergent_constitution.egm_solver import EGMSolver
 from emergent_constitution.entrepreneurial_solver import EntrepreneurialSolver
+from emergent_constitution.government import Government, clear_bond_market
 from emergent_constitution.initialization import initialize_simulation, initialize_simulation_v2
 from emergent_constitution.llm_citizen import CitizenLLM, PromptBuilder
 from emergent_constitution.llm_engine import LLMDecisionEngine
@@ -480,6 +481,13 @@ class LeadV2:
         self._recent_rejections: list[tuple[str, str, str]] = []  # (agent_id, rule_name, reason)
         self._recent_vote_outcomes: list[dict] = []  # Structured vote outcome records
 
+        # Government sector (REQ-306..309)
+        self._government = Government(
+            initial_debt=config.initial_debt,
+            debt_gdp_max=config.debt_gdp_max,
+            fiscal_rule_adjustment=config.fiscal_rule_adjustment,
+        )
+
         log.info(
             "simulation_v2.initialized",
             num_agents=config.num_agents,
@@ -573,6 +581,9 @@ class LeadV2:
         proposals, votes, constitution = self._process_governance(
             t, households, constitution, market
         )
+
+        # Step 7b: Government budget and bond market (REQ-306..309)
+        self._update_government(households, market)
 
         # Step 8: Update states
         households = self._update_states(households, econ_decisions, market, public_goods, firms)
@@ -1163,6 +1174,63 @@ class LeadV2:
         )
 
         return proposals, vote_outcomes, constitution
+
+    # ------------------------------------------------------------------
+    # Step 7b: Government budget and bond market (REQ-306..309)
+    # ------------------------------------------------------------------
+
+    def _update_government(
+        self,
+        households: list[HouseholdState],
+        market: MarketState,
+    ) -> None:
+        """Update government debt, clear bond market, and apply fiscal rule.
+
+        Implements REQ-306 (budget constraint), REQ-307 (bond market clearing),
+        and REQ-309 (fiscal rule for debt sustainability).
+
+        Args:
+            households: Current household states.
+            market: Current market state.
+        """
+        tax_revenue = sum(h.taxes_paid for h in households)
+        transfers = sum(h.transfers_received for h in households)
+        spending = market.public_goods if hasattr(market, "public_goods") else 0.0
+
+        # Bond market clearing (REQ-307)
+        household_wealths = [h.wealth for h in households]
+        bond_rate, clearing_error = clear_bond_market(
+            household_wealths=household_wealths,
+            government_debt=self._government.state.debt,
+            base_interest_rate=market.interest_rate,
+        )
+
+        # Government budget constraint (REQ-306)
+        self._government.update_budget(
+            tax_revenue=tax_revenue,
+            spending=spending,
+            transfers=transfers,
+            bond_rate=bond_rate,
+        )
+
+        # Fiscal rule (REQ-309)
+        output = market.aggregate_output if market.aggregate_output > 0.0 else 1.0
+        tax_adjustment = self._government.fiscal_rule(output)
+
+        if tax_adjustment > 0.0:
+            log.info(
+                "step7b.fiscal_rule_adjustment",
+                tax_adjustment=tax_adjustment,
+                debt_to_gdp=round(self._government.state.debt_to_gdp, 4),
+            )
+
+        log.debug(
+            "step7b.government_updated",
+            debt=round(self._government.state.debt, 2),
+            bond_rate=round(bond_rate, 6),
+            clearing_error=clearing_error,
+            tax_adjustment=tax_adjustment,
+        )
 
     # ------------------------------------------------------------------
     # Step 8: Update states (REQ-001, 003, 006, 010)

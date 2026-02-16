@@ -203,6 +203,20 @@ class SimulationConfigV2(BaseModel):
         description="Maximum iterations for KFE stationary distribution (REQ-205).",
     )
 
+    # --- Government (Phase 3: HANK, REQ-306..309) ---
+    initial_debt: float = Field(
+        default=0.0, ge=0.0, description="Initial government debt B_0 (REQ-306)"
+    )
+    debt_gdp_max: float = Field(
+        default=1.5, gt=0.0, description="Fiscal rule threshold B/Y (REQ-309)"
+    )
+    fiscal_rule_adjustment: float = Field(
+        default=0.01,
+        gt=0.0,
+        lt=1.0,
+        description="Tax rate increment when fiscal rule triggers (REQ-309)",
+    )
+
     # --- Feature flags ---
     fix_entrepreneur_budget: bool = Field(
         default=False,
