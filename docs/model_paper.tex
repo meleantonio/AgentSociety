@@ -41,6 +41,7 @@
 \newcommand{\calS}{\mathcal{S}}
 \newcommand{\calA}{\mathcal{A}}
 \newcommand{\calF}{\mathcal{F}}
+\newcommand{\calM}{\mathcal{M}}
 
 % --- Metadata ---
 \title{Emergent Constitutions: A Heterogeneous-Agent Model with Endogenous Governance and LLM-Augmented Political Decision Making}
@@ -1045,9 +1046,10 @@ This enables controlled experiments that compare LLM-augmented governance agains
 
 \Cref{tab:calibration} reports the baseline calibration. Parameter values are drawn from standard sources in the quantitative macro literature.
 
-\begin{table}[t]
+\begin{table}[tp]
 \centering
 \caption{Baseline Calibration}\label{tab:calibration}
+\small
 \begin{tabular}{@{}llcl@{}}
 \toprule
 \textbf{Parameter} & \textbf{Symbol} & \textbf{Value} & \textbf{Description} \\
@@ -1093,6 +1095,17 @@ TFP volatility & $\sigma_A$ & 0.01 & Innovation s.d. \\
 Base success probability & $p_0$ & 0.10 & --- \\
 TFP improvement mean & $\mu_{rd}$ & 0.05 & --- \\
 TFP improvement std & $\sigma_{rd}$ & 0.02 & --- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[tp]
+\centering
+\caption{Baseline Calibration (continued)}\label{tab:calibration2}
+\small
+\begin{tabular}{@{}llcl@{}}
+\toprule
+\textbf{Parameter} & \textbf{Symbol} & \textbf{Value} & \textbf{Notes} \\
 \midrule
 \multicolumn{4}{l}{\textit{Market clearing}} \\
 Method & --- & Analytical/Walrasian & Configurable \\
@@ -1298,9 +1311,10 @@ The discretization introduces approximation error from three sources:
 
 \Cref{tab:full_params} provides the complete parameter specification including derived and optional parameters.
 
-\begin{table}[t]
+\begin{table}[tp]
 \centering
 \caption{Complete Parameter Specification}\label{tab:full_params}
+\small
 \begin{tabular}{@{}llcl@{}}
 \toprule
 \textbf{Module} & \textbf{Parameter} & \textbf{Default} & \textbf{Constraint} \\
@@ -1351,6 +1365,17 @@ LLM & \texttt{llm\_temperature} & 0.0 & $[0, 2]$ \\
 LLM & \texttt{llm\_batch\_size} & 10 & $\geq 1$ \\
 LLM & \texttt{llm\_cache\_enabled} & True & boolean \\
 LLM & \texttt{benchmark\_mode} & False & boolean \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[tp]
+\centering
+\caption{Complete Parameter Specification (continued)}\label{tab:full_params2}
+\small
+\begin{tabular}{@{}llcl@{}}
+\toprule
+\textbf{Module} & \textbf{Parameter} & \textbf{Default} & \textbf{Constraint} \\
 \midrule
 R\&D & \texttt{rd\_success\_base\_prob} & 0.1 & $[0, 1]$ \\
 R\&D & \texttt{rd\_tfp\_improvement\_mean} & 0.05 & $> 0$ \\
