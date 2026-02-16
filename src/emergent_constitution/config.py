@@ -217,6 +217,32 @@ class SimulationConfigV2(BaseModel):
         description="Tax rate increment when fiscal rule triggers (REQ-309)",
     )
 
+    # --- Two-asset household (Phase 3: HANK, REQ-301..305) ---
+    two_asset_mode: bool = Field(
+        default=False,
+        description=(
+            "When True, households hold liquid bonds (b) and illiquid capital (k) "
+            "with adjustment costs. Default OFF preserves single-asset behavior."
+        ),
+    )
+    chi_0: float = Field(
+        default=0.01,
+        ge=0.0,
+        description="Linear component of illiquid adjustment cost (REQ-302).",
+    )
+    chi_1: float = Field(
+        default=0.005,
+        ge=0.0,
+        description="Quadratic component of illiquid adjustment cost (REQ-302).",
+    )
+    b_min: float = Field(
+        default=0.0,
+        description=(
+            "Borrowing constraint on liquid assets (REQ-304). "
+            "Can be negative for unsecured credit."
+        ),
+    )
+
     # --- Feature flags ---
     fix_entrepreneur_budget: bool = Field(
         default=False,

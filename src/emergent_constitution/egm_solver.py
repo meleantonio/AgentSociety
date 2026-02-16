@@ -4,8 +4,12 @@ Implements Carroll (2006) EGM for the Cobb-Douglas utility function
 u = c^alpha * l^beta * G^gamma, with Fella (2014) upper envelope for
 non-monotonicity near kinks.
 
-Traceability: REQ-115, REQ-116, REQ-117, REQ-118, REQ-119, REQ-120.
-Design reference: spec/design.md section 1.4.
+Two-asset extension (REQ-301..305): nested EGM for liquid/illiquid
+portfolio with convex adjustment costs per Kaplan-Moll-Violante (2018).
+
+Traceability: REQ-115, REQ-116, REQ-117, REQ-118, REQ-119, REQ-120,
+              REQ-301, REQ-302, REQ-303, REQ-304, REQ-305.
+Design reference: spec/design.md sections 1.4 and 3.1.
 """
 
 from __future__ import annotations
@@ -29,8 +33,54 @@ _DEFAULT_EGM_MAX_ITER = 500
 _DEFAULT_EGM_TOLERANCE = 1e-8
 _DEFAULT_EULER_RESIDUAL_TOL = 1e-6
 
+# Two-asset grid parameters (REQ-305)
+_DEFAULT_DEPOSIT_GRID_SIZE = 30
+_DEFAULT_K_GRID_SIZE = 100
+_DEFAULT_K_MAX = 500.0
+_GOLDEN_RATIO = (np.sqrt(5.0) - 1.0) / 2.0
+_GOLDEN_SECTION_TOL = 1e-6
+_GOLDEN_SECTION_MAX_ITER = 50
+
 # Numerical safety floor
 _EPSILON = 1e-10
+
+
+def adjustment_cost(
+    deposit: float,
+    illiquid_stock: float,
+    chi_0: float = 0.01,
+    chi_1: float = 0.005,
+) -> float:
+    """Convex adjustment cost for illiquid deposits/withdrawals (REQ-302).
+
+    chi(d) = chi_0 * |d| + chi_1 * d^2 / k
+
+    Args:
+        deposit: d = k_{t+1} - k_t, the net deposit into illiquid asset.
+        illiquid_stock: Current illiquid holdings k_t.
+        chi_0: Linear cost component.
+        chi_1: Quadratic cost component.
+
+    Returns:
+        Non-negative adjustment cost. Zero when deposit is zero.
+    """
+    if abs(deposit) < 1e-10:
+        return 0.0
+    k = max(illiquid_stock, 1e-10)
+    return chi_0 * abs(deposit) + chi_1 * deposit**2 / k
+
+
+def _adjustment_cost_vec(
+    deposit: np.ndarray,
+    illiquid_stock: np.ndarray,
+    chi_0: float,
+    chi_1: float,
+) -> np.ndarray:
+    """Vectorized adjustment cost (REQ-302)."""
+    k = np.maximum(illiquid_stock, 1e-10)
+    cost = chi_0 * np.abs(deposit) + chi_1 * deposit**2 / k
+    # Zero cost for zero deposit
+    return np.where(np.abs(deposit) < 1e-10, 0.0, cost)
 
 
 class EGMSolver:
@@ -84,6 +134,29 @@ class EGMSolver:
 
         # Last-computed value function (for entrepreneurial solver compatibility)
         self._last_value_func: list[list[float]] | None = None
+
+        # Two-asset grids and caches (REQ-301..305)
+        self._two_asset_mode = config.two_asset_mode
+        self._chi_0 = config.chi_0
+        self._chi_1 = config.chi_1
+        self._b_min = config.b_min
+        if self._two_asset_mode:
+            self.n_b = _DEFAULT_A_GRID_SIZE  # liquid grid size
+            self.n_k = _DEFAULT_K_GRID_SIZE  # illiquid grid size
+            self.n_d = _DEFAULT_DEPOSIT_GRID_SIZE  # deposit grid size
+            self.b_grid = self._build_exponential_grid(
+                self._b_min, _DEFAULT_A_MAX, self.n_b
+            )
+            self.k_grid = self._build_exponential_grid(
+                0.0, _DEFAULT_K_MAX, self.n_k
+            )
+            self._b_grid_np = np.array(self.b_grid, dtype=np.float64)
+            self._k_grid_np = np.array(self.k_grid, dtype=np.float64)
+            # Two-asset policy cache
+            self._two_asset_policy_cache: dict[
+                tuple[float, ...],
+                tuple[np.ndarray, np.ndarray, np.ndarray],
+            ] = {}
 
     def get_value_function(self) -> tuple[list[list[float]] | None, list[float]]:
         """Return the last-computed value function and asset grid.

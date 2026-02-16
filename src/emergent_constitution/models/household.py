@@ -102,6 +102,10 @@ class HouseholdState(BaseModel):
     firm_id: str | None = None
     coalition_id: str | None = None
 
+    # Two-asset fields (REQ-301, REQ-304)
+    liquid: float = Field(default=0.0, description="b_t: government bonds")
+    illiquid: float = Field(default=0.0, ge=0.0, description="k_t: physical capital / housing")
+
     # Entrepreneurial ability
     entrepreneurial_ability: float = Field(default=1.0, gt=0.0)
     entrepreneurial_ability_index: int = Field(default=0, ge=0)
@@ -115,3 +119,8 @@ class HouseholdState(BaseModel):
     taxes_paid: float = 0.0
     transfers_received: float = 0.0
     realized_utility: float = 0.0
+
+    @property
+    def total_wealth(self) -> float:
+        """Total wealth across both asset types (REQ-301)."""
+        return self.liquid + self.illiquid
