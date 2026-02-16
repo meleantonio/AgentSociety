@@ -498,7 +498,7 @@ class OpenAICompatibleProvider:
         last_error: Exception | None = None
         for attempt in range(1, _LOCAL_MAX_RETRIES + 1):
             try:
-                raw_text = self._call_api(augmented_messages, json_mode=True)
+                raw_text = self._call_api(augmented_messages, schema=schema)
                 data = json.loads(raw_text)
                 validated = schema.model_validate(data)
                 return validated.model_dump_json()
@@ -589,12 +589,18 @@ class OpenAICompatibleProvider:
 
         return "\n".join(lines)
 
-    def _call_api(self, messages: list[dict[str, str]], json_mode: bool = True) -> str:
+    def _call_api(
+        self,
+        messages: list[dict[str, str]],
+        schema: type[BaseModel] | None = None,
+    ) -> str:
         """POST to /chat/completions and return the content text.
 
         Args:
             messages: Chat messages for the API call.
-            json_mode: Whether to request response_format=json_object.
+            schema: Optional Pydantic model class. When provided, uses
+                ``response_format`` with ``json_schema`` type for structured
+                output (supported by LM Studio, vLLM, etc.).
 
         Returns:
             The text content of the first choice.
@@ -608,12 +614,28 @@ class OpenAICompatibleProvider:
             "temperature": self._temperature,
             "max_tokens": 1024,
         }
-        if json_mode:
-            payload["response_format"] = {"type": "json_object"}
+        if schema is not None:
+            json_schema = schema.model_json_schema()
+            # Remove Pydantic-specific keys that aren't valid in JSON Schema
+            json_schema.pop("title", None)
+            payload["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": schema.__name__,
+                    "strict": True,
+                    "schema": json_schema,
+                },
+            }
 
         try:
             resp = self._client.post("/chat/completions", json=payload)
             resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            # Include the response body for better diagnostics
+            body = exc.response.text[:500] if exc.response else ""
+            raise LLMProviderError(
+                f"OpenAI-compatible API call failed ({exc.response.status_code}): {body}"
+            ) from exc
         except Exception as exc:
             raise LLMProviderError(f"OpenAI-compatible API call failed: {exc}") from exc
 
