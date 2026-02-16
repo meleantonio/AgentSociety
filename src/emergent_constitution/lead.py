@@ -32,6 +32,7 @@ from emergent_constitution.economics import (
     produce_output,
     validate_household_states,
 )
+from emergent_constitution.egm_solver import EGMSolver
 from emergent_constitution.entrepreneurial_solver import EntrepreneurialSolver
 from emergent_constitution.initialization import initialize_simulation, initialize_simulation_v2
 from emergent_constitution.llm_citizen import CitizenLLM, PromptBuilder
@@ -762,7 +763,7 @@ class LeadV2:
                 constitution=constitution,
             )
         else:
-            # Benchmark mode: solver-driven entrepreneurial decisions with utility comparison
+            # Benchmark mode: solver-driven entrepreneurial decisions
             entre_public_goods = self.constitution_engine.enforce_public_goods(
                 constitution, 0.0, len(households)
             )

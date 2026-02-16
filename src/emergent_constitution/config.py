@@ -97,7 +97,10 @@ class SimulationConfigV2(BaseModel):
     )
     use_bellman_occ_choice: bool = Field(
         default=False,
-        description="Use Bellman-based occupational choice (REQ-110..114). Default OFF for backward compat.",
+        description=(
+            "Use Bellman-based occupational choice "
+            "(REQ-110..114). Default OFF for compat."
+        ),
     )
 
     # --- Production ---
