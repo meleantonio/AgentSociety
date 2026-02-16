@@ -7,9 +7,10 @@ What happens when you give AI agents an economy and no rules? **The Emergent Con
 ## Demo
 
 <div align="center">
-
-[![Watch the demo](https://cdn.loom.com/sessions/thumbnails/f6d5fd52753347e1b55f40d1b00f6306-with-play.gif)](https://www.loom.com/share/f6d5fd52753347e1b55f40d1b00f6306)
-
+  <a href="https://www.loom.com/share/f6d5fd52753347e1b55f40d1b00f6306">
+    <img src="https://cdn.loom.com/sessions/thumbnails/f6d5fd52753347e1b55f40d1b00f6306-5517b003a2af543d.jpg" width="600" alt="Watch the demo">
+  </a>
+  <p><em>Click to watch the demo (4 min)</em></p>
 </div>
 
 ## Overview
