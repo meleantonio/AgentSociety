@@ -81,13 +81,16 @@ def render(output: SimulationOutputV2) -> None:
         f1, f2, f3 = st.columns(3)
         all_actions = sorted({r["Action"] for r in proposals_data})
         with f1:
-            period_range = st.slider(
-                "Period range",
-                min_value=min(periods),
-                max_value=max(periods),
-                value=(min(periods), max(periods)),
-                key="prop_period_range",
-            )
+            if min(periods) < max(periods):
+                period_range = st.slider(
+                    "Period range",
+                    min_value=min(periods),
+                    max_value=max(periods),
+                    value=(min(periods), max(periods)),
+                    key="prop_period_range",
+                )
+            else:
+                period_range = (min(periods), max(periods))
         with f2:
             action_filter = st.multiselect("Action", all_actions, default=all_actions)
         with f3:
