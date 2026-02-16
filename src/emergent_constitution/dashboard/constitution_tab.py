@@ -52,6 +52,7 @@ def _render_evolution_charts(history: list[HistoryEntryV2], periods: list[int]) 
                     "Constitutional Timeline",
                 ),
                 width="stretch",
+                key="const_timeline",
             )
         else:
             st.info("No constitutional changes during the simulation.")
@@ -75,6 +76,7 @@ def _render_evolution_charts(history: list[HistoryEntryV2], periods: list[int]) 
                     "Rate",
                 ),
                 width="stretch",
+                key="const_tax_rate",
             )
         else:
             st.info("No tax rules found in constitution snapshots.")
@@ -96,6 +98,7 @@ def _render_evolution_charts(history: list[HistoryEntryV2], periods: list[int]) 
                 "Count",
             ),
             width="stretch",
+            key="const_governance",
         )
 
     with row2_r:
@@ -109,6 +112,7 @@ def _render_evolution_charts(history: list[HistoryEntryV2], periods: list[int]) 
                 "Rules",
             ),
             width="stretch",
+            key="const_rule_count",
         )
 
 
