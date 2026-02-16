@@ -4,7 +4,7 @@ An agent-based political economy simulation built on a DSGE-HA (Dynamic Stochast
 
 ## Overview
 
-**The Emergent Constitution** combines a rigorous economic model (Bewley-Huggett-Aiyagari) with LLM-driven agent behavior to study how institutions emerge from individual decision-making.
+**The Emergent Constitution** combines a rigorous economic model (HANK — Heterogeneous Agent New Keynesian, following Kaplan-Moll-Violante 2018) with LLM-driven agent behavior to study how institutions emerge from individual decision-making. The model features a two-asset structure (liquid bonds + illiquid capital with convex adjustment costs), nominal rigidities (sticky prices, Taylor rule), and a government sector with debt and bond market clearing.
 
 Each citizen-agent (household) has:
 - **Economic state**: wealth (assets), idiosyncratic productivity from a Markov chain
@@ -13,50 +13,69 @@ Each citizen-agent (household) has:
 - **Occupational role**: worker, entrepreneur, researcher, or unemployed
 
 Every period, agents make three types of decisions via LLM:
-1. **Economic**: how much to consume vs save, how much to work vs leisure
+1. **Economic**: how much to consume vs save, how much to work vs leisure, portfolio allocation between liquid bonds and illiquid capital
 2. **Entrepreneurial**: whether to create/manage/liquidate firms, invest capital, conduct R&D
-3. **Political**: propose constitutional rules, vote on others' proposals
+3. **Political**: propose constitutional rules, vote on others' proposals (with political utility microfounded in the Bellman equation)
 
-A tatonnement algorithm clears labor and capital markets each period, finding equilibrium wages and interest rates. Firms produce output via Cobb-Douglas technology. The constitution is an extensible set of rules (taxes, transfers, public goods, regulations) that agents can modify through democratic voting.
+Walrasian or analytical algorithms clear labor, capital, and bond markets each period, finding equilibrium wages, interest rates, and bond prices. Heterogeneous firms produce output via Cobb-Douglas technology. The constitution is an extensible set of rules (taxes, transfers, public goods, regulations) that agents can modify through democratic voting.
 
 ## Key Features
 
-- **DSGE-HA economic model**: Cobb-Douglas production, Rouwenhorst productivity shocks, tatonnement market clearing
+- **HANK economic model**: Two-asset structure (liquid bonds + illiquid capital with convex adjustment costs), nominal rigidities (Rotemberg sticky prices, Taylor rule, Fisher equation), government sector with debt and fiscal rules
 - **LLM-driven decisions**: Claude makes all agent decisions with structured JSON output, context-aware prompts, and batched API calls
-- **Numerical benchmark**: Value Function Iteration (VFI) solver for comparison with LLM decisions
+- **Numerical benchmark**: EGM solver (Carroll 2006) and VFI, with KFE distribution tracking for comparison with LLM decisions
+- **Two-asset households**: liquid bonds and illiquid capital with convex adjustment costs
+- **Government sector**: debt, bond market clearing, fiscal rules
+- **Nominal rigidities**: Rotemberg sticky prices, Taylor rule, Fisher equation
+- **Political utility microfounded in Bellman equation**: voting decisions derived from household optimization
 - **Extensible constitution**: open-ended rule collection (tax schedules, transfer programs, public goods, regulations, voting procedures)
 - **Firm dynamics**: endogenous firm creation, R&D investment, productivity shocks, liquidation
+- **Walrasian market clearing**: heterogeneous firms with Rouwenhorst productivity shocks (7-state default)
+- **SMM calibration**: moment-matching targets for empirical fit
 - **20+ tracked statistics**: Gini, Pareto efficiency, Y/C/I aggregates, wealth quantiles, unemployment, firm stats, social welfare
 - **Deterministic**: same seed produces identical outcomes (seeded RNG for all randomness)
-- **892 tests** including property-based invariant tests for 6 formal properties
+- **1412 tests** across 50 test modules including property-based invariant tests for 6 formal properties
 
 ## Architecture
 
-The simulation follows a **9-step period lifecycle**:
+The simulation follows a **12-step extended lifecycle** (original 9-step core with HANK extensions):
 
 ```
 For each period t = 1, ..., T:
-  1. Draw shocks      → Idiosyncratic productivity (Rouwenhorst), aggregate TFP, preference shocks
-  2. Clear markets     → Tatonnement finds equilibrium wage w_t and interest rate r_t
-  3. Collect decisions → LLM (or numerical solver) returns economic + entrepreneurial decisions
-  4. Validate          → Project decisions onto feasible set (budget constraints, borrowing limits)
-  5. Execute production→ Firms produce Y = A * K^α * L^(1-α), distribute income, process R&D
+  1. Draw shocks      → Idiosyncratic productivity (Rouwenhorst 7-state default), aggregate TFP, preference shocks
+  1b. Apply mechanism effects → Productivity effects from mechanism outcomes
+  2. Clear markets     → Walrasian or analytical clearing finds equilibrium wage w_t, interest rate r_t, bond price q_t
+  2a. Government budget → Update debt, check fiscal rule, adjust taxes/transfers
+  2b. Nominal block    → Rotemberg pricing, Taylor rule, Fisher equation
+  2c. Bond market clearing → Household bond demand = government debt supply
+  3. Collect decisions → LLM (or EGM/VFI solver) returns economic + entrepreneurial + political decisions (with political utility)
+  4. Validate          → Project decisions onto feasible set (budget constraints, borrowing limits, portfolio constraints)
+  5. Execute production→ Heterogeneous firms produce Y = A * K^α * L^(1-α), distribute income, process R&D
   6. Enforce constitution → Apply taxes, transfers, public goods, regulations
   7. Process governance → Collect proposals, run votes, apply passed rules
-  8. Update states     → Consumption, savings, utility computation for all households
+  8. Update states     → Consumption, savings, portfolio allocation (bonds vs capital), utility computation
+  8a. Distribution tracking → KFE update of wealth distribution
   9. Observe           → Record Gini, Pareto, welfare, aggregates (every K periods)
 ```
+
+*Note: The original 9-step lifecycle is retained as the core. HANK extensions (1b, 2a-c, 3 political utility, 8a) are additional sub-steps.*
 
 ### Components
 
 | Component | Module | Description |
 |-----------|--------|-------------|
-| **LeadV2** | `lead.py` | Simulation governor: runs the 9-step lifecycle |
+| **LeadV2** | `lead.py` | Simulation governor: runs the 12-step extended lifecycle |
 | **LLMDecisionEngine** | `llm_engine.py` | Batched LLM calls with caching and fallback |
 | **LLMProvider** | `llm_providers.py` | Pluggable LLM interface (Anthropic, Mock) |
 | **NumericalSolver** | `numerical_solver.py` | VFI benchmark solver |
+| **EGMSolver** | `egm_solver.py` | Carroll (2006) EGM with Fella upper envelope |
+| **Distribution** | `distribution.py` | KFE distribution tracking (Young 2010) |
+| **Calibrator** | `calibration.py` | SMM moment-matching calibration |
+| **Government** | `government.py` | Government debt, budget constraint, fiscal rule |
+| **NominalBlock** | `nominal.py` | Rotemberg prices, Taylor rule, Fisher equation |
+| **PoliticalUtility** | `political_utility.py` | Bellman-derived political preferences |
 | **ConstitutionEngine** | `constitution_engine.py` | Rule enforcement with AST-sandboxed code |
-| **Market clearing** | `market_clearing.py` | Tatonnement price finding |
+| **Market clearing** | `market_clearing.py` | Walrasian and analytical clearing |
 | **ObserverV2** | `observer.py` | 20+ macro statistics computation |
 | **Reporter** | `reporter.py` | Markdown and JSON report generation |
 
@@ -227,7 +246,7 @@ output = lead.run()
 | **Shocks** | | | |
 | `rho_z` | float | 0.9 | Idiosyncratic productivity persistence |
 | `sigma_z` | float | 0.2 | Idiosyncratic productivity volatility |
-| `num_z_states` | int | 5 | Rouwenhorst grid points |
+| `num_z_states` | int | 7 | Rouwenhorst grid points (HANK default: 7) |
 | `rho_a` | float | 0.95 | Aggregate TFP persistence |
 | `sigma_a` | float | 0.01 | Aggregate TFP volatility |
 | **Production** | | | |
@@ -242,6 +261,7 @@ output = lead.run()
 | `proposal_interval` | int | 5 | Constitutional proposals every K periods |
 | `observer_interval` | int | 5 | Statistics computed every K periods |
 | **Market Clearing** | | | |
+| `market_clearing_method` | str | "analytical" | "analytical" or "walrasian" |
 | `tatonnement_max_iter` | int | 100 | Max price-finding iterations |
 | `tatonnement_tolerance` | float | 1e-6 | Convergence tolerance |
 | **LLM** | | | |
@@ -252,7 +272,27 @@ output = lead.run()
 | `llm_cache_enabled` | bool | True | Cache identical contexts |
 | **Benchmark** | | | |
 | `benchmark_mode` | bool | False | Numerical-only mode (no LLM, $0) |
-| `solver_method` | str | "egm" | "vfi" or "egm" |
+| `solver_method` | str | "egm" | "vfi", "vfi_numpy", or "egm" |
+| `distribution_mode` | str | "individual" | "individual" or "kfe" |
+| **Two-Asset** | | | |
+| `two_asset_mode` | bool | False | Enable two-asset structure (bonds + capital) |
+| `chi_0` | float | 0.01 | Linear adjustment cost component |
+| `chi_1` | float | 0.005 | Quadratic adjustment cost component |
+| `b_min` | float | 0.0 | Liquid borrowing constraint |
+| **Government** | | | |
+| `initial_debt` | float | 0.0 | Initial government debt |
+| `debt_gdp_max` | float | 1.5 | Fiscal rule debt-to-GDP threshold |
+| `fiscal_rule_adjustment` | float | 0.01 | Fiscal rule tax rate increment |
+| **Nominal** | | | |
+| `nominal_rigidities` | bool | False | Enable sticky prices + Taylor rule |
+| `rotemberg_cost` | float | 100.0 | Rotemberg price adjustment cost |
+| `taylor_phi_pi` | float | 1.5 | Taylor rule inflation coefficient |
+| `taylor_phi_y` | float | 0.125 | Taylor rule output gap coefficient |
+| `inflation_target` | float | 0.02 | Target inflation rate |
+| `elasticity_sub` | float | 6.0 | Elasticity of substitution |
+| **Political** | | | |
+| `political_lambda` | float | 0.05 | Political utility weight in Bellman equation |
+| `pure_bellman_politics` | bool | False | All politics via value function (no LLM) |
 | **R&D** | | | |
 | `rd_success_base_prob` | float | 0.1 | Base R&D success probability |
 | `rd_tfp_improvement_mean` | float | 0.05 | Mean TFP improvement from R&D |
@@ -367,14 +407,20 @@ AgentSociety/
 │   ├── __init__.py                 # Package exports (v1)
 │   ├── __main__.py                 # CLI entry points (v1 + v2)
 │   ├── config.py                   # SimulationConfig (v1) + SimulationConfigV2
-│   ├── lead.py                     # Lead (v1) + LeadV2 (9-step lifecycle)
+│   ├── lead.py                     # Lead (v1) + LeadV2 (12-step lifecycle)
 │   ├── citizen.py                  # Rule-based citizen logic (v1)
 │   ├── llm_citizen.py              # LLM citizen interface (v1)
 │   ├── llm_engine.py               # LLM decision engine (v2): batching, caching, fallback
 │   ├── llm_providers.py            # LLM provider abstraction: Anthropic, Mock
 │   ├── numerical_solver.py         # VFI benchmark solver (v2)
+│   ├── egm_solver.py               # EGM solver (Carroll 2006)
+│   ├── distribution.py             # KFE distribution tracking
+│   ├── calibration.py              # SMM calibration
+│   ├── government.py               # Government sector (debt, bonds, fiscal rule)
+│   ├── nominal.py                  # Nominal rigidities block
+│   ├── political_utility.py        # Bellman-derived political preferences
 │   ├── constitution_engine.py      # Rule enforcement with AST sandbox (v2)
-│   ├── market_clearing.py          # Tatonnement market clearing (v2)
+│   ├── market_clearing.py          # Walrasian and analytical market clearing (v2)
 │   ├── shock_generators.py         # Rouwenhorst + shock drawing (v2)
 │   ├── economics.py                # Production, budget, utility (v1 + v2)
 │   ├── voting.py                   # Proposal validation and tallying (v1 + v2)
@@ -396,7 +442,7 @@ AgentSociety/
 │       ├── proposal.py             # Proposal (v1) + ConstitutionalProposal (v2)
 │       ├── tick.py                 # TickState (v1)
 │       └── history.py              # HistoryEntry (v1) + HistoryEntryV2, SimulationOutputV2
-├── tests/                          # 35 test modules, 892 tests
+├── tests/                          # 50 test modules, 1412 tests
 ├── docs/                           # Architecture, models, configuration, development guides
 ├── AgentSocietyPlanning/
 │   ├── spec/                       # Specification documents (intent, requirements, design, tasks)
@@ -420,6 +466,15 @@ pytest -m "not slow"
 
 # Run v2-specific tests
 pytest tests/test_lead_v2.py tests/test_v2_models.py tests/test_v2_config.py
+
+# HANK integration tests
+pytest tests/test_hank_integration.py -v
+
+# EGM solver tests
+pytest tests/test_egm_solver.py -v
+
+# Walrasian market clearing
+pytest tests/test_walrasian_clearing.py -v
 
 # Run property-based invariant tests
 pytest tests/test_properties.py -v
@@ -454,7 +509,7 @@ ruff check .     # Lint
 
 Developed by meleantonio (meleantonio@gmail.com)
 
-This project showcases Agent Teams at scale, leveraging Claude's 1M context window to maintain full simulation state and history. The entire v2 DSGE-HA implementation (17 tasks, 86 subtasks, ~13,200 lines of code) was built by a team of 4 Claude Code agents working in parallel.
+This project showcases Agent Teams at scale, leveraging Claude's 1M context window to maintain full simulation state and history. The entire v2 DSGE-HA implementation (17 tasks, 86 subtasks, ~13,200 lines of code) was built by a team of 4 Claude Code agents working in parallel. The HANK v3 upgrade was built by a team of 12 Claude Code agents working across 4 phases.
 
 ## License
 

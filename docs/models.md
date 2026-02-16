@@ -13,7 +13,7 @@ Replaces v1 `AgentState` with full DSGE-HA household model.
 ```python
 class HouseholdState(BaseModel):
     id: str
-    wealth: float                    # Assets a_t (>= 0)
+    wealth: float                    # Assets a_t (>= 0) [total in two-asset mode]
     productivity: float              # Idiosyncratic z_t from Markov chain
     productivity_index: int          # Index into transition matrix
     utility_params: UtilityParams    # Cobb-Douglas weights
@@ -21,6 +21,12 @@ class HouseholdState(BaseModel):
     role: OccupationalRole           # worker/entrepreneur/researcher/unemployed
     firm_id: str | None              # Firm owned (if entrepreneur)
     coalition_id: str | None         # Coalition membership
+    # Two-asset fields (HANK v3, REQ-301, REQ-304)
+    liquid: float = 0.0              # b_t: government bonds (liquid asset)
+    illiquid: float = 0.0            # k_t: physical capital / housing (illiquid asset)
+    # Entrepreneurial ability (HANK v3)
+    entrepreneurial_ability: float = 1.0
+    entrepreneurial_ability_index: int = 0
     # Per-period outcomes (filled after decisions applied)
     consumption: float               # c_t for this period
     leisure: float                   # l_t (0=full work, 1=no work)
@@ -30,7 +36,37 @@ class HouseholdState(BaseModel):
     taxes_paid: float
     transfers_received: float
     realized_utility: float          # u(c_t, l_t, G_t)
+
+    @property
+    def total_wealth(self) -> float:
+        """Total wealth across both asset types (REQ-301)."""
+        return self.liquid + self.illiquid
 ```
+
+### Two-Asset Extension (HANK v3)
+
+When `two_asset_mode=True` in the configuration, households hold two assets:
+
+1. **Liquid asset (b_t)**: Government bonds, frictionlessly adjustable each period
+2. **Illiquid asset (k_t)**: Physical capital or housing, subject to convex adjustment costs
+
+**Adjustment cost function** (REQ-302):
+```
+chi(d_t, k_t) = chi_0 * |d_t| + chi_1 * d_t^2 / k_t
+```
+where `d_t = k_{t+1} - k_t` is the net deposit into the illiquid asset.
+
+**Budget constraint** (two-asset):
+```
+c_t + b_{t+1} + k_{t+1} + chi(d_t, k_t) = (1 + r^b) * b_t + (1 + r^k) * k_t
+    + w_t * z_t * (1 - l_t) - T_t + Tr_t
+```
+
+**Borrowing constraints**:
+- Liquid: `b_{t+1} >= b_min` (can be negative for unsecured credit)
+- Illiquid: `k_{t+1} >= 0` (cannot short capital)
+
+The two-asset model captures heterogeneous MPCs and the distinction between liquid savings (for consumption smoothing) and illiquid wealth (for long-term accumulation).
 
 ### UtilityParams
 
@@ -92,12 +128,13 @@ class FirmState(BaseModel):
 ```python
 class MarketState(BaseModel):
     wage: float                      # w_t labor market clearing price
-    interest_rate: float             # r_t capital market clearing price
+    interest_rate: float             # r_t capital market clearing price (r^k)
+    bond_rate: float = 0.0           # r^b government bond rate (HANK v3, REQ-307)
     aggregate_output: float          # Y_t total output
     aggregate_consumption: float     # C_t total consumption
     aggregate_investment: float      # I_t total investment
     government_spending: float       # G_t public goods spending
-    market_clearing_error: float     # |excess demand| (PROP-003: < 1e-6)
+    market_clearing_error: float     # |excess demand| (PROP-003: < 1e-6, analytical: 0.0)
     labor_excess_demand: float
     capital_excess_demand: float
 ```
@@ -253,10 +290,60 @@ class HistoryEntryV2(BaseModel):
     social_welfare: float                    # Sum of realized utilities
     cumulative_welfare: float                # Discounted sum to date
     wage: float                              # w_t
-    interest_rate: float                     # r_t
+    interest_rate: float                     # r_t (capital market rate)
+    bond_rate: float = 0.0                   # r^b (government bond rate, HANK v3)
     rule_changes: list[str]
     constitution_snapshot: ConstitutionV2
 ```
+
+### GovernmentState (HANK v3)
+
+**Location**: `src/emergent_constitution/government.py`
+
+```python
+class GovernmentState(BaseModel):
+    debt: float = 0.0                # B_t outstanding government bonds
+    tax_revenue: float = 0.0         # T_t total tax revenue this period
+    spending: float = 0.0            # G_t public goods spending this period
+    transfers: float = 0.0           # Tr_t total transfers this period
+    bond_rate: float = 0.03          # r^b_t bond interest rate
+    debt_to_gdp: float = 0.0         # B_t / Y_t ratio
+```
+
+Tracks government fiscal state each period. Updated via:
+- `Government.update_budget()` — Apply budget constraint (REQ-306)
+- `Government.fiscal_rule()` — Auto-adjust taxes when debt/GDP exceeds threshold (REQ-309)
+
+### NominalState (HANK v3)
+
+**Location**: `src/emergent_constitution/nominal.py`
+
+```python
+class NominalState(BaseModel):
+    price_level: float = 1.0         # P_t cumulative price level
+    inflation: float = 0.0           # pi_t = P_t / P_{t-1} - 1
+    nominal_rate: float = 0.05       # i_t policy rate from Taylor rule
+    real_bond_rate: float = 0.03     # r^b_t from Fisher equation
+    expected_inflation: float = 0.0  # E_t[pi_{t+1}]
+    marginal_cost: float = 1.0       # mc_t real marginal cost
+```
+
+Tracks nominal variables when `nominal_rigidities=True`. Updated via `NominalBlock.update()` which solves the Taylor-Fisher-NKPC system (REQ-310..315).
+
+### CalibrationTargets (HANK v3)
+
+**Location**: `src/emergent_constitution/calibration.py`
+
+```python
+class CalibrationTargets(BaseModel):
+    wealth_gini: float = 0.80                # Target wealth Gini coefficient
+    entrepreneur_share: float = 0.10         # Target fraction of entrepreneurs
+    top10_wealth_share: float = 0.70         # Target top 10% wealth share
+    median_mpc: float | None = None          # Target median MPC (Phase 3, two-asset)
+    liquid_illiquid_ratio: float | None = None  # Target liquid/illiquid ratio (Phase 3)
+```
+
+Empirical calibration targets for SMM moment-matching (REQ-208). Used by `Calibrator.calibrate()` to find parameters that match model moments to data (REQ-210).
 
 ### WelfareSummary
 

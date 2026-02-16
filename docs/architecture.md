@@ -7,7 +7,7 @@ The Emergent Constitution v2 is built on a DSGE-HA (Dynamic Stochastic General E
 ## System Architecture
 
 ```
-SimulationConfigV2 (~30 fields)
+SimulationConfigV2 (~50 fields)
        │
        v
 ┌─────────────────────────────────────────────────────────┐
@@ -22,7 +22,7 @@ SimulationConfigV2 (~30 fields)
 ┌────────┐ ┌────────┐ ┌─────────────┐ ┌──────────┐
 │ LLM    │ │Numeric │ │Constitution │ │ Observer  │
 │Decision│ │Solver  │ │   Engine    │ │   V2     │
-│Engine  │ │(VFI)   │ │(AST sandbox)│ │(20+ stats)│
+│Engine  │ │EGM/VFI │ │(AST sandbox)│ │(20+ stats)│
 └───┬────┘ └───┬────┘ └──────┬──────┘ └────┬─────┘
     │          │              │              │
     v          v              v              v
@@ -41,9 +41,18 @@ SimulationConfigV2 (~30 fields)
 ┌──────────────┐  ┌──────────────────┐  ┌───────────────┐
 │ Market       │  │ Shock Generators │  │ LLM Providers │
 │ Clearing     │  │                  │  │               │
-│ (tatonnement)│  │ - Rouwenhorst    │  │ - Anthropic   │
-│              │  │ - Aggregate TFP  │  │ - Mock        │
+│ (analytical/ │  │ - Rouwenhorst    │  │ - Anthropic   │
+│  walrasian)  │  │ - Aggregate TFP  │  │ - Mock        │
 │ w_t, r_t     │  │ - Preference     │  │               │
+└──────────────┘  └──────────────────┘  └───────────────┘
+
+┌──────────────┐  ┌──────────────────┐  ┌───────────────┐
+│ Government   │  │ Distribution     │  │ Nominal Block │
+│              │  │                  │  │               │
+│ - Debt       │  │ - KFE tracking   │  │ - Taylor rule │
+│ - Bonds      │  │ - Stationary     │  │ - NKPC        │
+│ - Fiscal     │  │ - Aggregation    │  │ - Fisher eq.  │
+│   rule       │  │                  │  │               │
 └──────────────┘  └──────────────────┘  └───────────────┘
 ```
 
@@ -115,22 +124,33 @@ Pluggable protocol for LLM-based decision generation.
 
 ### Numerical Solver
 
-**Location**: `src/emergent_constitution/numerical_solver.py`
+**Location**: `src/emergent_constitution/numerical_solver.py` (VFI), `src/emergent_constitution/egm_solver.py` (EGM)
 
-Solves household Bellman equations via Value Function Iteration (VFI) on a discrete grid. Provides the benchmark optimal policy functions against which LLM decisions can be compared.
+Solves household Bellman equations via Value Function Iteration (VFI) or Endogenous Grid Method (EGM) on a discrete grid. Provides the benchmark optimal policy functions against which LLM decisions can be compared.
+
+**EGM Solver** (default, REQ-115..120):
+- 200-point exponential asset grid (finer near borrowing constraint)
+- 51-point leisure grid
+- Carroll (2006) endogenous grid method with Fella (2014) upper envelope for non-monotonicity
+- Policy cache keyed on market parameters
+- Supports two-asset extension (liquid/illiquid) per REQ-301..305
+
+**VFI Solver** (legacy):
+- Discrete grid search over consumption and leisure
+- NumPy-vectorized for speed
 
 **Key methods**:
-- `solve_household(agent, market, tax_rate, public_goods, transfer) -> EconomicDecision`
-- `solve_all(households, market, constitution_tax_rate, public_goods, transfer) -> dict[str, EconomicDecision]`
+- `solve_all(households, market, constitution_tax_rate, public_goods, transfer, political_flow_bonus) -> dict[str, EconomicDecision]`
+- `get_value_function() -> tuple[list[list[float]], list[float]]` — Exposes V(a,z) for occupational choice
 
 The solver computes:
 ```
-V(a, z) = max_{c, l} { u(c, l, G) + β * E[V(a', z')] }
+V(a, z) = max_{c, l} { u(c, l, G) + λ * v(C; θ) + β * E[V(a', z')] }
 s.t.  a' = (1+r)*a + w*z*(1-l) - c - tax + transfer
       a' >= a_min, c >= 0, 0 <= l <= 1
 ```
 
-**Traceability**: REQ-036, REQ-037
+**Traceability**: REQ-036, REQ-037, REQ-115..120, REQ-301..305, REQ-401
 
 ### Constitution Engine
 
@@ -152,16 +172,20 @@ Enforces constitutional rules with AST-sandboxed code execution. Rules contain P
 
 **Location**: `src/emergent_constitution/market_clearing.py`
 
-Finds equilibrium prices (wage `w_t`, interest rate `r_t`) via tatonnement. Uses Cobb-Douglas first-order conditions for firms:
-- `w = (1-α) * A * (K/L)^α` (marginal product of labor)
-- `r = α * A * (K/L)^(α-1) - δ` (marginal product of capital minus depreciation)
+Finds equilibrium prices (wage `w_t`, interest rate `r_t`) via analytical FOCs or Walrasian bisection.
 
-Iteratively adjusts prices until excess demand in both labor and capital markets falls below `tatonnement_tolerance`.
+**Analytical mode** (default, REQ-101):
+- Closed-form Cobb-Douglas FOCs: `w = (1-α) * Y/L`, `r = α * Y/K - δ`
+- Zero market-clearing error every period
+
+**Walrasian mode** (REQ-101..106):
+- Bisection on prices with heterogeneous firm demands
+- Iteratively adjusts prices until excess demand in both labor and capital markets falls below `tatonnement_tolerance`
 
 **Key function**:
 - `clear_markets(households, firms, aggregate_tfp, config, prev_market) -> MarketState`
 
-**Traceability**: REQ-011 through REQ-014, PROP-003
+**Traceability**: REQ-011 through REQ-014, REQ-101..106, PROP-003
 
 ### Shock Generators
 
@@ -176,6 +200,153 @@ Iteratively adjusts prices until excess demand in both labor and capital markets
 - `draw_preference_shocks(households, rng, scale)` — Optional preference perturbations
 
 **Traceability**: REQ-015, REQ-016, REQ-017
+
+### EGMSolver
+
+**Location**: `src/emergent_constitution/egm_solver.py`
+
+Endogenous Grid Method solver for consumption-savings-labor problems using Carroll (2006) EGM with Fella (2014) upper envelope.
+
+**Grid specification** (REQ-118):
+- 200-point exponential asset grid: finer spacing near borrowing constraint
+- 51-point leisure grid
+- 7-state Rouwenhorst productivity Markov chain (default)
+
+**Features**:
+- Fast convergence: no inner maximization loop
+- Policy cache: skip re-solving when market prices unchanged
+- Supports political utility flow bonus (REQ-401)
+- Two-asset extension: nested EGM for liquid/illiquid with convex adjustment costs (REQ-301..305)
+
+**Key methods**:
+- `solve_egm_cached(alpha, beta, gamma, beta_discount, wage, interest_rate, public_goods, tax_function, transfer, political_flow_bonus) -> (c_policy, l_policy)`
+- `euler_residual(c_policy, l_policy, ...) -> float` — Convergence check (REQ-119)
+- `solve_all(households, market, constitution_tax_rate, public_goods, transfer, political_flow_bonus) -> dict[str, EconomicDecision]`
+
+**Traceability**: REQ-115..120, REQ-301..305, REQ-401
+
+### Distribution
+
+**Location**: `src/emergent_constitution/distribution.py`
+
+Tracks the joint wealth-productivity distribution via Kolmogorov Forward Equation (KFE) using the Young (2010) lottery allocation method.
+
+**Representation**:
+- Grid-based probability mass array: `mu(a, z)` of shape `(n_a, n_z)`
+- Each cell stores `Pr(a = a_grid[i], z = z_grid[j])`
+
+**Operations**:
+- `forward(policy_savings, transition_matrix)` — Advance distribution one period via KFE (REQ-201, REQ-202)
+- `stationary(a_grid, z_grid, policy_savings, transition_matrix)` — Iterate to convergence (REQ-205)
+- `aggregate(policy_fn)` — Compute aggregate quantities (REQ-203)
+- `sample_agents(n_agents, rng)` — Draw individual agents from distribution (REQ-204)
+- `gini()`, `mean_wealth()`, `percentiles()`, `top_share()` — Distributional statistics
+
+**Traceability**: REQ-201..205, PROP-008
+
+### Government
+
+**Location**: `src/emergent_constitution/government.py`
+
+Government sector managing debt, bonds, budget constraint, and fiscal rule.
+
+**Budget constraint** (REQ-306, PROP-010):
+```
+B' = (1 + r^b) * B + G + Tr - T
+```
+
+**Bond market clearing** (REQ-307):
+- Bisection on bond rate `r^b` to equate household bond demand with government supply
+- Separate from capital market rate `r^k`
+
+**Fiscal rule** (REQ-309):
+- Automatic tax adjustment when `B/Y > debt_gdp_max` (default 1.5)
+- Stabilizes debt dynamics
+
+**Key components**:
+- `GovernmentState` — tracks debt, tax revenue, spending, transfers, bond rate, debt-to-GDP
+- `Government.update_budget()` — Apply budget constraint
+- `Government.fiscal_rule()` — Auto-adjust taxes for debt sustainability
+- `clear_bond_market()` — Find equilibrium bond rate
+
+**Traceability**: REQ-306..309, PROP-010
+
+### NominalBlock
+
+**Location**: `src/emergent_constitution/nominal.py`
+
+New Keynesian sticky prices with Rotemberg adjustment costs, Taylor rule, and Fisher equation.
+
+**Taylor rule** (REQ-312):
+```
+i_t = r_bar + phi_pi * (pi_t - pi_bar) + phi_y * gap_t
+```
+
+**Fisher equation** (REQ-313):
+```
+r^b_t = (1 + i_t) / (1 + E[pi_{t+1}]) - 1
+```
+
+**NKPC** (REQ-311):
+```
+phi_p * pi_t * (pi_t - pi_bar) = (1 - epsilon) + epsilon * mc_t
+    + beta * phi_p * E[pi_{t+1}] * (E[pi_{t+1}] - pi_bar) * Y_{t+1}/Y_t
+```
+
+**Algorithm**:
+- Outer iteration to find inflation consistent with Taylor-Fisher-NKPC system
+- Adaptive expectations: `E[pi'] = rho * pi_{t-1}`
+
+**Traceability**: REQ-310..315
+
+### PoliticalUtility
+
+**Location**: `src/emergent_constitution/political_utility.py`
+
+Microfounded political preferences integrated into the Bellman equation.
+
+**Political utility function** (REQ-402):
+```
+v(C; theta) = theta_eq * f_eq(C) + theta_lib * f_lib(C)
+  where f_eq(C) = -Gini(C), f_lib(C) = -tau(C)
+```
+
+**Bellman integration** (REQ-401):
+```
+V(a, z) = max_{c,l} { u(c,l,G) + lambda * v(C; theta) + beta * E[V(a',z')] }
+```
+
+**Proposal evaluation** (REQ-403, REQ-404):
+- Compare Bellman values under proposed vs current constitution
+- LLM receives Bellman-derived recommendation as structured context
+- Log when LLM overrides Bellman recommendation
+
+**Traceability**: REQ-401..405
+
+### Calibrator
+
+**Location**: `src/emergent_constitution/calibration.py`
+
+Simulated Method of Moments (SMM) calibration for model parameters.
+
+**Target moments** (REQ-208):
+- Wealth Gini coefficient
+- Entrepreneur share
+- Top 10% wealth share
+- Median MPC (Phase 3, two-asset)
+- Liquid/illiquid wealth ratio (Phase 3, two-asset)
+
+**SMM calibration** (REQ-209):
+- Nelder-Mead derivative-free optimization
+- Moment weights for relative importance
+- Parameter bounds enforcement
+
+**Key methods**:
+- `compute_model_moments(agents)` — Extract moments from simulation
+- `smm_objective(params, targets, simulate_fn)` — Weighted moment distance
+- `calibrate(initial_params, targets, simulate_fn, bounds)` — Full SMM calibration (REQ-210)
+
+**Traceability**: REQ-208..210
 
 ### ObserverV2
 
@@ -220,7 +391,7 @@ Generates human-readable output from simulation results.
   7. Statistics evolution (time series table)
 - `generate_json_v2(output) -> str` — Full JSON serialization
 
-## Data Flow: 9-Step Period Lifecycle
+## Data Flow: 9-Step Period Lifecycle (with HANK Extensions)
 
 ```
 Period t begins
@@ -232,20 +403,26 @@ Period t begins
 │
 ├─ Step 2: CLEAR MARKETS
 │  ├─ Input: households (labor supply), firms (capital + labor demand), A_t
-│  ├─ Tatonnement: iterate w_t, r_t until |excess demand| < tolerance
-│  └─ Output: MarketState(wage, interest_rate, aggregates)
+│  ├─ Analytical mode: closed-form FOCs w = (1-α)Y/L, r = αY/K - δ
+│  ├─ Walrasian mode: iterate w_t, r_t until |excess demand| < tolerance
+│  ├─ HANK: Government bond market clearing (if government debt > 0)
+│  │   └─ Bisect on r^b to equate bond demand = bond supply
+│  └─ Output: MarketState(wage, interest_rate, bond_rate, aggregates)
 │
 ├─ Step 3: COLLECT DECISIONS
 │  ├─ LLM path: build context → batch API call → parse JSON → validate
-│  │   ├─ EconomicDecision: consumption c_t, leisure l_t
+│  │   ├─ EconomicDecision: consumption c_t, leisure l_t (deposit d_t in two-asset mode)
 │  │   ├─ EntrepreneurialDecision: create/close firm, capital, R&D
-│  │   └─ PoliticalDecision: proposal, votes
-│  └─ Benchmark path: NumericalSolver.solve_all() → optimal policy
+│  │   └─ PoliticalDecision: proposal, votes (with Bellman context if enabled)
+│  └─ Benchmark path: EGMSolver.solve_all() / NumericalSolver.solve_all() → optimal policy
+│      ├─ EGM: Carroll (2006) + Fella (2014) upper envelope, 200-point grid
+│      ├─ Political utility: lambda * v(C; theta) added to flow utility (REQ-401)
+│      └─ Two-asset: nested EGM for liquid/illiquid with adjustment costs (REQ-301..305)
 │
 ├─ Step 4: VALIDATE CONSTRAINTS
 │  ├─ Budget: c_t ≤ (1+r)*a_t + w*z*(1-l) - tax + transfer
-│  ├─ Borrowing: a_{t+1} ≥ a_min
-│  └─ Non-negativity: c_t ≥ 0, 0 ≤ l_t ≤ 1
+│  ├─ Borrowing: a_{t+1} ≥ a_min (b_{t+1} ≥ b_min in two-asset mode)
+│  └─ Non-negativity: c_t ≥ 0, 0 ≤ l_t ≤ 1, k_{t+1} ≥ 0
 │
 ├─ Step 5: EXECUTE PRODUCTION
 │  ├─ Each firm: Y_f = A_f * K_f^α * L_f^(1-α)
@@ -257,21 +434,36 @@ Period t begins
 │  ├─ Taxes: collect revenue per tax_schedule rules
 │  ├─ Public goods: allocate fraction of revenue
 │  ├─ Transfers: distribute remaining revenue per transfer_program rules
-│  └─ Regulations: apply market_regulation and firm_regulation rules
+│  ├─ Regulations: apply market_regulation and firm_regulation rules
+│  ├─ HANK: Government budget constraint B' = (1+r^b)*B + G + Tr - T (REQ-306)
+│  ├─ HANK: Fiscal rule — auto-adjust taxes if B/Y > threshold (REQ-309)
+│  └─ HANK: Nominal block update (if enabled, REQ-310..315)
+│      ├─ Compute marginal cost mc_t = w / A
+│      ├─ Taylor rule: i_t = r_bar + phi_pi*(pi - pi_bar) + phi_y*gap
+│      ├─ Fisher equation: r^b = (1 + i) / (1 + E[pi']) - 1
+│      └─ NKPC: solve for inflation pi_t
 │
 ├─ Step 7: PROCESS GOVERNANCE (if proposal_interval)
 │  ├─ Collect proposals from political decisions
 │  ├─ Validate proposals against constitution schema
 │  ├─ Tally votes per voting_procedure rule (majority/supermajority)
+│  ├─ HANK: Bellman-derived vote recommendations (if pure_bellman_politics=True, REQ-405)
 │  └─ Apply passed proposals to constitution
 │
 ├─ Step 8: UPDATE STATES
 │  ├─ New wealth: a_{t+1} = a_t - c_t + income - taxes + transfers
+│  │   └─ Two-asset: b_{t+1}, k_{t+1} updated with deposit d_t and adjustment cost chi(d_t, k_t)
 │  ├─ Realized utility: u(c_t, l_t, G_t) = c^α * l^β * G^γ
+│  ├─ HANK: Distribution tracking (if distribution_mode="kfe")
+│  │   ├─ Forward KFE step: mu_{t+1} = T(mu_t, policy_savings, transition_matrix)
+│  │   └─ Aggregate moments from distribution (REQ-203)
 │  └─ Validate: NaN/Inf checks, a_{t+1} ≥ a_min
 │
 └─ Step 9: OBSERVE (if observer_interval)
    ├─ Compute 20+ statistics (Gini, Pareto, welfare, etc.)
+   ├─ HANK: Government state (debt, debt/GDP, bond rate, fiscal rule triggers)
+   ├─ HANK: Nominal state (inflation, nominal rate, price level, output gap)
+   ├─ HANK: Calibration moment comparison (if calibration_targets set, REQ-210)
    ├─ Detect rule changes vs previous observation
    └─ Append HistoryEntryV2 to history
 ```

@@ -4,28 +4,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**The Emergent Constitution** is a DSGE-HA (Dynamic Stochastic General Equilibrium with Heterogeneous Agents) political economy simulation. Citizen-agents with heterogeneous preferences, endowments, and value vectors self-organize governance from scratch. The simulation tracks the emergence of property rights, voting rules, taxation, coalition dynamics, and measures outcomes (Pareto efficiency, Gini coefficient). Economic decisions are solved via VFI on the Bellman equation; political decisions are delegated to LLMs.
+**The Emergent Constitution** is a HANK (Heterogeneous Agent New Keynesian) political economy simulation. Citizen-agents with heterogeneous preferences, endowments, and value vectors self-organize governance from scratch. The simulation tracks the emergence of property rights, voting rules, taxation, coalition dynamics, and measures outcomes (Pareto efficiency, Gini coefficient). Economic decisions are solved via EGM/VFI on the Bellman equation; political decisions are delegated to LLMs with Bellman-derived preferences.
 
 ## Project Status
 
-**v2 engine complete.** 977 tests passing. A **HANK upgrade** (v3) is planned to address economic inconsistencies and add nominal rigidities, two-asset portfolio choice, and proper distribution tracking.
+**v3 HANK engine complete.** 1412 tests passing across 50 test modules. All features from v1 through v3 are implemented and merged.
 
-### Completed Phases (v1 + v2)
+### Completed Phases
 
 - **v1 Phases 1-4** (PRs #1-#4) — Core simulation, proposals/voting, observer, reporter/CLI
 - **v2 Phase 5** (PRs #52-#57) — DSGE-HA engine: Cobb-Douglas production, Rouwenhorst shocks, VFI household solver, entrepreneurial choice, analytical market clearing, LLM governance, constitution engine
-- **v2.1** (`feat/mechanism-effects-framework`) — Generic mechanism effects for novel LLM-proposed institutions (revenue, distribution, productivity, constraints, wealth flows, public goods, utility effects)
-
-### HANK Upgrade (v3) — In Progress
-
-The v3 upgrade addresses critiques from a review against Kaplan-Moll-Violante (2018), Auclert (2019), Cagetti-De Nardi (2006). Four phases, 14 tasks, 84 subtasks:
-
-- **Phase 1: Fix Economic Foundations** — EGM solver (Carroll 2006) replacing 11-point grid search, Walrasian market clearing with firm-level FOC bisection, corrected entrepreneur budget constraint (profit only, no labor income), Bellman-based occupational choice
-- **Phase 2: Scale and Calibrate** — KFE distribution tracking (Young 2010), 7-point Rouwenhorst grids, moment-matching calibration (wealth Gini 0.80, entrepreneur share 10%)
-- **Phase 3: HANK Features** — Two-asset structure (liquid bonds + illiquid capital), government debt/bond market, nominal rigidities (Rotemberg pricing, NKPC, Taylor rule)
-- **Phase 4: Microfound Politics** — Political utility in the Bellman equation, Bellman-derived political preferences
-
-All new features gated behind config flags (defaults preserve v2 behavior). See `spec/tasks.md` for detailed subtask checklist.
+- **v2.1** (`feat/mechanism-effects-framework`) — Generic mechanism effects for novel LLM-proposed institutions
+- **v3 Phase 1** (PR #79) — EGM solver (Carroll 2006), Walrasian market clearing, corrected entrepreneur budget, Bellman occupational choice
+- **v3 Phase 2** (PR #80) — KFE distribution tracking (Young 2010), 7-state Rouwenhorst grids, SMM calibration
+- **v3 Phase 3** (PR #81) — Two-asset households (liquid/illiquid), government debt/bond market, nominal rigidities (Rotemberg, NKPC, Taylor rule)
+- **v3 Phase 4** (PR #82) — Political utility in Bellman equation, HANK integration tests
 
 ### Spec Documents
 
@@ -60,7 +53,7 @@ Step 8:  Update states (budget constraint: a' = (1+r)a + income - c - T + Tr)
 Step 9:  Observe (Gini, Pareto, aggregates, welfare)
 ```
 
-**v3 additions** (planned): Steps 2b (nominal block), 3b (portfolio choice), 7b (government budget), 8b (KFE forward)
+**v3 additions** (implemented): Steps 2b (nominal block), 3b (portfolio choice), 7b (government budget), 8b (KFE forward)
 
 ### Key Components
 
@@ -106,13 +99,13 @@ Step 9:  Observe (Gini, Pareto, aggregates, welfare)
 - `src/emergent_constitution/llm_providers.py` — LLM provider abstraction (Anthropic, Mock)
 - `docs/model_paper.tex` — LaTeX academic paper documenting the DSGE-HA model
 
-### V3 (HANK upgrade — planned, see `spec/design.md`)
-- `src/emergent_constitution/egm_solver.py` — EGM household solver (Carroll 2006), replaces brute-force VFI
+### V3 (HANK engine)
+- `src/emergent_constitution/egm_solver.py` — EGM household solver (Carroll 2006 with Fella 2014 upper envelope)
 - `src/emergent_constitution/distribution.py` — KFE distribution tracking (Young 2010 lottery)
-- `src/emergent_constitution/calibration.py` — Moment-matching calibration (SMM)
-- `src/emergent_constitution/government.py` — Government budget, debt, fiscal rule
-- `src/emergent_constitution/nominal.py` — Nominal rigidities, Taylor rule, NKPC
-- `src/emergent_constitution/political_utility.py` — Political utility function for Bellman equation
+- `src/emergent_constitution/calibration.py` — Moment-matching calibration (SMM via Nelder-Mead)
+- `src/emergent_constitution/government.py` — Government budget constraint, debt dynamics, fiscal rule, bond market clearing
+- `src/emergent_constitution/nominal.py` — Nominal rigidities: Rotemberg pricing, NKPC, Taylor rule, Fisher equation
+- `src/emergent_constitution/political_utility.py` — Political utility in Bellman equation, proposal evaluation
 
 ## Critical Design Constraints
 
@@ -122,10 +115,10 @@ Step 9:  Observe (Gini, Pareto, aggregates, welfare)
 - **Deterministic tie-breaks:** Status quo wins ties, or use seeded randomness.
 - **Numerical stability:** Cap or abort on NaN/Inf values. All division guards against zero denominators.
 - **Sandboxed citizen logic:** No network or file access from citizen logic except via Lead-provided state.
-- **Backward compatibility (PROP-012):** All new v3 features gated behind config flags. Default config reproduces v2 behavior. All 977 existing tests must pass at each phase boundary.
-- **Euler equation accuracy (PROP-007, v3):** EGM solver must achieve Euler residual < 1e-6. Policy functions must be monotone in wealth.
+- **Backward compatibility (PROP-012):** All new v3 features gated behind config flags. Default config reproduces v2 behavior. All existing tests pass.
+- **Euler equation accuracy (PROP-007):** EGM solver achieves Euler residual < 1e-6. Policy functions are monotone in wealth.
 - **Market clearing tolerance (PROP-003):** Excess demand in all markets < 1e-8 after equilibrium computation.
-- **Distribution conservation (PROP-008, v3):** KFE distribution sums to 1 at every period (tolerance 1e-12).
+- **Distribution conservation (PROP-008):** KFE distribution sums to 1 at every period (tolerance 1e-12).
 
 ## Running
 
@@ -162,15 +155,15 @@ pytest --cov=emergent_constitution --cov-report=term-missing
 - **State models:** Pydantic
 - **Numerics:** NumPy (vectorized VFI/EGM, market clearing, KFE), SciPy (v3: optimization, linear algebra)
 - **Formatter/linter:** Ruff (`ruff format .`, `ruff check .`)
-- **Testing:** pytest (977 tests, target 90%+ coverage for new code)
+- **Testing:** pytest (1412 tests across 50 modules)
 - **Orchestration:** Single-process tick loop
 
-## Key Economic Concepts (Reference)
+## Key Economic Concepts (Implemented)
 
-When implementing v3 tasks, refer to these:
-
-- **EGM (Endogenous Grid Method):** Invert Euler equation to get consumption analytically at each savings grid point, then interpolate back to exogenous grid. Avoids root-finding. See `spec/design.md` §1.4.
-- **Walrasian clearing:** Bisect on wage to equate `sum_f L_f*(w)` with `L^s`. Interest rate from aggregate MPK. See `spec/design.md` §1.1.
-- **KFE (Kolmogorov Forward Equation):** Evolve distribution forward using policy functions + transition matrix. Young (2010) lottery for non-grid-aligned savings. See `spec/design.md` §2.1.
-- **Two-asset HANK:** Liquid (bonds) + illiquid (capital) with convex adjustment cost. Nested EGM: outer loop over deposit, inner EGM for liquid savings. See `spec/design.md` §3.1.
-- **Rotemberg pricing:** Quadratic price adjustment cost creates sticky prices. NKPC links inflation to marginal cost. Taylor rule sets nominal rate. Fisher equation links nominal to real. See `spec/design.md` §3.3.
+- **EGM (Endogenous Grid Method):** Inverts Euler equation for consumption at each savings grid point. 200-point exponential asset grid, 51-point leisure grid. Fella (2014) upper envelope for non-monotonicities. See `egm_solver.py`.
+- **Walrasian clearing:** Bisects on wage to equate `sum_f L_f*(w)` with `L^s`. Interest rate from aggregate MPK. See `market_clearing.py`.
+- **KFE (Kolmogorov Forward Equation):** Evolves distribution forward using policy functions + transition matrix. Young (2010) lottery for non-grid-aligned savings. See `distribution.py`.
+- **Two-asset HANK:** Liquid bonds + illiquid capital with convex adjustment cost `chi(d,k) = chi_0|d| + chi_1*d^2/k`. See `models/household.py`.
+- **Rotemberg pricing:** Quadratic price adjustment cost, NKPC, Taylor rule, Fisher equation. See `nominal.py`.
+- **Political utility:** `v(C;theta) = theta_eq*(-Gini) + theta_lib*(-tau)` enters Bellman as constant flow bonus. See `political_utility.py`.
+- **Government bonds:** Budget constraint `B' = (1+r^b)B + G + Tr - T`, fiscal rule for debt sustainability. See `government.py`.
