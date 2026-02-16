@@ -61,6 +61,7 @@ from emergent_constitution.models.proposal import (
 )
 from emergent_constitution.models.shocks import ShockState
 from emergent_constitution.models.tick import TickState
+from emergent_constitution.egm_solver import EGMSolver
 from emergent_constitution.numerical_solver import NumericalSolver
 from emergent_constitution.observer import ObserverV2, observe_tick
 from emergent_constitution.rng import SimulationRNG
@@ -450,19 +451,11 @@ class LeadV2:
         # Decision engine: LLM or numerical solver
         if config.benchmark_mode or not config.use_llm:
             self._llm_engine: LLMDecisionEngine | None = None
-            self._solver = NumericalSolver(
-                config=config,
-                productivity_grid=period_state.shocks.productivity_grid,
-                transition_matrix=period_state.shocks.transition_matrix,
-            )
+            self._solver = self._create_solver(config, period_state)
         else:
             # LLMDecisionEngine accepts duck-typed config (uses getattr for v2 fields)
             self._llm_engine = LLMDecisionEngine(config=config, rng=self.rng)  # type: ignore[arg-type]
-            self._solver = NumericalSolver(
-                config=config,
-                productivity_grid=period_state.shocks.productivity_grid,
-                transition_matrix=period_state.shocks.transition_matrix,
-            )
+            self._solver = self._create_solver(config, period_state)
 
         # Entrepreneurial solver (used in both benchmark and LLM modes)
         self._entre_solver = EntrepreneurialSolver(
@@ -551,10 +544,24 @@ class LeadV2:
 
         # Step 4b: Set labor_supply and income on households from validated decisions
         # so that Step 6 (enforce_taxes) can compute taxes on actual income.
+        # Build firm profit lookup for entrepreneur income (when fix is active)
+        _firm_profit_by_owner: dict[str, float] = {}
+        if self.config.fix_entrepreneur_budget:
+            for f in firms:
+                _firm_profit_by_owner[f.owner_id] = f.profit
+
         for h in households:
             decision = econ_decisions.get(h.id, EconomicDecision(consumption=0.0, leisure=0.5))
-            h.labor_supply = 1.0 - decision.leisure
-            h.income = market.wage * h.productivity * h.labor_supply
+            if (
+                self.config.fix_entrepreneur_budget
+                and h.role == OccupationalRole.ENTREPRENEUR
+            ):
+                # Entrepreneurs do not supply labor; income = firm profit only
+                h.labor_supply = 0.0
+                h.income = _firm_profit_by_owner.get(h.id, 0.0)
+            else:
+                h.labor_supply = 1.0 - decision.leisure
+                h.income = market.wage * h.productivity * h.labor_supply
 
         # Step 5: Execute production
         firms = self._execute_production(firms, entre_decisions, households, market)
@@ -759,8 +766,11 @@ class LeadV2:
             entre_public_goods = self.constitution_engine.enforce_public_goods(
                 constitution, 0.0, len(households)
             )
+            # Pass VFI value function for Bellman-based occupational choice (REQ-110)
+            vfi_value_func, vfi_a_grid = self._solver.get_value_function()
             entre_decisions = self._entre_solver.solve_all(
-                households, firms, market, public_goods=entre_public_goods
+                households, firms, market, public_goods=entre_public_goods,
+                vfi_value_func=vfi_value_func, a_grid=vfi_a_grid,
             )
 
         log.debug(
@@ -800,13 +810,32 @@ class LeadV2:
         """
         tax_rate = self._get_tax_rate(constitution)
 
+        # Build firm profit lookup for entrepreneur budget validation
+        _firm_profit_by_owner: dict[str, float] = {}
+        if self.config.fix_entrepreneur_budget:
+            active_firms = self.period_state.firms
+            for f in active_firms:
+                _firm_profit_by_owner[f.owner_id] = f.profit
+
         constrained: dict[str, EconomicDecision] = {}
         for h in households:
             decision = decisions.get(h.id, EconomicDecision(consumption=0.0, leisure=0.5))
-            income = market.wage * h.productivity * (1.0 - decision.leisure)
+            if (
+                self.config.fix_entrepreneur_budget
+                and h.role == OccupationalRole.ENTREPRENEUR
+            ):
+                # Entrepreneur income = firm profit only (no labor income)
+                income = _firm_profit_by_owner.get(h.id, 0.0)
+            else:
+                income = market.wage * h.productivity * (1.0 - decision.leisure)
             tax = income * tax_rate
             transfer = 0.0  # Conservative; actual transfers computed in step 6
-            budget = compute_budget(h, market.wage, market.interest_rate, tax, transfer)
+            budget = compute_budget(
+                h, market.wage, market.interest_rate, tax, transfer,
+                firm_profit=_firm_profit_by_owner.get(h.id, 0.0)
+                if self.config.fix_entrepreneur_budget
+                else None,
+            )
             clamped = enforce_budget_constraint(decision, h, budget, self.config.a_min)
 
             # Apply mechanism effect constraints
@@ -1175,15 +1204,26 @@ class LeadV2:
             leisure = decision.leisure
             labor_supply = 1.0 - leisure
 
-            # Income from labor
-            labor_income = market.wage * h.productivity * labor_supply
-
             # Add firm profit for entrepreneurs
             firm_profit = firm_profit_by_owner.get(h.id, 0.0)
-            total_income = labor_income + firm_profit
+
+            if (
+                self.config.fix_entrepreneur_budget
+                and h.id in owners_with_firms
+            ):
+                # Entrepreneurs are residual claimants: income = pi_f only.
+                # Their labor is embedded in firm production, not separately
+                # compensated at market wage. Labor supply = 0.
+                labor_supply = 0.0
+                total_income = firm_profit
+            else:
+                # Workers: income from labor (+ any leftover firm profit for
+                # backward compat when flag is off)
+                labor_income = market.wage * h.productivity * labor_supply
+                total_income = labor_income + firm_profit
 
             # Full DSGE-HA budget constraint:
-            # a' = (1+r)*a + w*z*(1-l) + firm_profit - c - taxes + transfers
+            # a' = (1+r)*a + income - c - taxes + transfers
             new_wealth = (
                 (1.0 + market.interest_rate) * h.wealth
                 + total_income
@@ -1281,6 +1321,35 @@ class LeadV2:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _create_solver(
+        config: SimulationConfigV2,
+        period_state: PeriodState,
+    ) -> NumericalSolver | EGMSolver:
+        """Create the appropriate household solver based on config.solver_method.
+
+        Args:
+            config: Simulation configuration.
+            period_state: Initial period state (for grids).
+
+        Returns:
+            NumericalSolver or EGMSolver instance.
+
+        Implements REQ-120 (EGM default, VFI fallback).
+        """
+        if config.solver_method == "egm":
+            return EGMSolver(
+                config=config,
+                productivity_grid=period_state.shocks.productivity_grid,
+                transition_matrix=period_state.shocks.transition_matrix,
+            )
+        # "vfi" and "vfi_numpy" both use NumericalSolver (numpy-vectorized VFI)
+        return NumericalSolver(
+            config=config,
+            productivity_grid=period_state.shocks.productivity_grid,
+            transition_matrix=period_state.shocks.transition_matrix,
+        )
 
     def _get_tax_rate(self, constitution: ConstitutionV2) -> float:
         """Extract a flat tax rate from the constitution.
