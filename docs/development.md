@@ -57,7 +57,7 @@ AgentSociety/
 ├── src/emergent_constitution/     # Main package
 │   ├── models/                    # Pydantic data models
 │   │   ├── agent.py               #   v1 AgentState
-│   │   ├── household.py           #   v2 HouseholdState
+│   │   ├── household.py           #   v2 HouseholdState (with liquid/illiquid fields)
 │   │   ├── firm.py                #   v2 FirmState
 │   │   ├── market.py              #   v2 MarketState
 │   │   ├── shocks.py              #   v2 ShockState
@@ -68,15 +68,23 @@ AgentSociety/
 │   │   └── history.py             #   v1 + v2 HistoryEntry, SimulationOutput
 │   ├── __init__.py                # Public API exports (v1)
 │   ├── __main__.py                # CLI entry points (v1 + v2)
-│   ├── config.py                  # SimulationConfig (v1) + SimulationConfigV2
-│   ├── lead.py                    # Lead (v1) + LeadV2 (9-step lifecycle)
+│   ├── config.py                  # SimulationConfig (v1) + SimulationConfigV2 (~50 fields)
+│   ├── lead.py                    # Lead (v1) + LeadV2 (9-step lifecycle with HANK)
 │   ├── citizen.py                 # Rule-based agent decision logic (v1)
+│   ├── citizen_v2.py              # Benchmark rule-based logic for v2
 │   ├── llm_citizen.py             # LLM citizen interface (v1)
 │   ├── llm_engine.py              # LLM decision engine (v2): batching, caching, fallback
 │   ├── llm_providers.py           # LLM provider abstraction: Anthropic, Mock
 │   ├── numerical_solver.py        # VFI benchmark solver (v2)
+│   ├── egm_solver.py              # EGM solver with Fella upper envelope (HANK v3)
+│   ├── entrepreneurial_solver.py  # Firm value and occupational choice
+│   ├── distribution.py            # KFE distribution tracking (HANK v3)
+│   ├── calibration.py             # SMM calibration (HANK v3)
+│   ├── government.py              # Government debt, bonds, fiscal rule (HANK v3)
+│   ├── nominal.py                 # New Keynesian nominal block (HANK v3)
+│   ├── political_utility.py       # Microfounded political preferences (HANK v3)
 │   ├── constitution_engine.py     # Rule enforcement with AST sandbox (v2)
-│   ├── market_clearing.py         # Tatonnement market clearing (v2)
+│   ├── market_clearing.py         # Analytical/Walrasian market clearing (v2)
 │   ├── shock_generators.py        # Rouwenhorst discretization + shock drawing (v2)
 │   ├── economics.py               # Production, budget, utility (v1 + v2)
 │   ├── voting.py                  # Proposal validation and tallying (v1 + v2)
@@ -86,7 +94,7 @@ AgentSociety/
 │   ├── reporter.py                # Report generation (v1 + v2)
 │   ├── rng.py                     # Seeded RNG wrapper (PROP-001)
 │   └── logging.py                 # structlog configuration
-├── tests/                         # 35 test modules, 892 tests
+├── tests/                         # 50 test modules, 1412 tests
 ├── docs/                          # Documentation
 ├── AgentSocietyPlanning/          # Specification documents
 │   ├── spec/                      #   requirements, design, tasks
@@ -129,6 +137,34 @@ pytest tests/test_market_clearing.py -v
 
 # LLM engine and providers
 pytest tests/test_llm_engine.py tests/test_llm_providers.py -v
+```
+
+### HANK v3 Tests
+
+```bash
+# HANK integration tests
+pytest tests/test_hank_integration.py -v
+
+# EGM solver
+pytest tests/test_egm_solver.py -v
+
+# Distribution (KFE)
+pytest tests/test_distribution.py -v
+
+# Government sector
+pytest tests/test_government.py -v
+
+# Nominal block
+pytest tests/test_nominal.py -v
+
+# Political utility
+pytest tests/test_political_utility.py -v
+
+# Calibration
+pytest tests/test_calibration.py -v
+
+# Walrasian clearing
+pytest tests/test_walrasian_clearing.py -v
 ```
 
 ### Excluding Slow Tests
@@ -413,10 +449,16 @@ When modifying economics, market clearing, or state management code, verify thes
 |----------|-------------|
 | PROP-001 | Same seed + config produces identical output |
 | PROP-002 | All household wealth >= `a_min` after every step |
-| PROP-003 | Market clearing error < `tatonnement_tolerance` |
+| PROP-003 | Market clearing error < `tatonnement_tolerance` (analytical: zero) |
 | PROP-004 | No NaN/Inf in wealth, consumption, or output |
 | PROP-005 | Social welfare is finite and non-negative |
 | PROP-006 | All constitutional rules pass AST validation |
+| PROP-008 | KFE distribution mass conservation (sum = 1.0) |
+| PROP-010 | Government budget identity holds each period |
+
+**HANK v3 additions**:
+- **PROP-008**: Mass conservation in KFE distribution tracking (total probability = 1.0)
+- **PROP-010**: Government budget constraint identity: `B' = (1+r^b)*B + G + Tr - T`
 
 ### v2 Test Fixtures
 
@@ -520,7 +562,7 @@ Types: `feat`, `fix`, `refactor`, `docs`, `test`, `chore`
 
 1. Create feature branch from `main`
 2. Implement feature with tests
-3. Ensure all 892+ tests pass
+3. Ensure all 1412+ tests pass
 4. Format and lint: `ruff format . && ruff check --fix .`
 5. Commit with clear message
 6. Push and create PR

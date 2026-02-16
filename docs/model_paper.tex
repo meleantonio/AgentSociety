@@ -60,16 +60,16 @@
 
 % --- Abstract ---
 \begin{abstract}
-We develop a dynamic stochastic general equilibrium model with heterogeneous agents (DSGE-HA) in which governance institutions are fully endogenous. Agents choose between working and entrepreneurship via utility-based occupational choice, face idiosyncratic productivity and ability shocks discretized via the Rouwenhorst method, and collectively design taxation, redistribution, public goods provision, regulation, and voting rules through a constitutional framework. Economic decisions (consumption, savings, labor supply) are solved via value function iteration on the Bellman equation, while political decisions---proposal generation and voting---are delegated to large language models (LLMs) that receive structured economic context, mimicking bounded rationality in institutional design. Analytical Cobb-Douglas market clearing yields zero-error equilibrium prices each period. The mutable constitution feeds back into economic equilibrium through fiscal policy and market regulation. We characterize the recursive competitive equilibrium, describe the computational algorithm, and discuss the model's implications for the co-evolution of institutions and inequality.
+We develop a Heterogeneous Agent New Keynesian (HANK) model with endogenous governance institutions. Agents choose between working and entrepreneurship via Bellman-based occupational choice, face idiosyncratic productivity and ability shocks discretized via the Rouwenhorst method, hold two-asset portfolios of liquid bonds and illiquid capital with convex adjustment costs, and collectively design taxation, redistribution, public goods provision, regulation, and voting rules through a mutable constitutional framework. Household optimization is solved via the Endogenous Grid Method (EGM) of Carroll (2006), with Fella (2014) upper envelope for non-monotonicities. Walrasian market clearing with heterogeneous firms uses bisection on excess labor demand. The cross-sectional distribution is tracked via the Kolmogorov Forward Equation using the Young (2010) lottery allocation method. A government sector issues bonds, finances spending through a budget constraint, and applies fiscal rules for debt sustainability. Nominal rigidities follow the Rotemberg (1982) sticky price framework with a Taylor rule and Fisher equation. Political preferences are microfounded: a political utility function enters the Bellman equation as a constant flow bonus, yielding structurally consistent proposal evaluation and voting. Political deliberation is delegated to large language models (LLMs) that receive Bellman-derived context, mimicking bounded rationality in institutional design. We characterize the recursive competitive equilibrium, describe the computational algorithm, and discuss implications for the co-evolution of institutions and inequality.
 \end{abstract}
 
 \medskip
 
-\noindent\textbf{Keywords:} Heterogeneous agents, endogenous institutions, occupational choice, LLM agents, constitutional dynamics, value function iteration
+\noindent\textbf{Keywords:} HANK, heterogeneous agents, endogenous grid method, New Keynesian, endogenous institutions, occupational choice, LLM agents, constitutional dynamics, two-asset model, Kolmogorov Forward Equation
 
 \medskip
 
-\noindent\textbf{JEL Classification:} D72, E21, H11, L26, C63
+\noindent\textbf{JEL Classification:} D72, E21, E31, E52, H11, H63, L26, C63
 
 \newpage
 \tableofcontents
@@ -87,27 +87,33 @@ The canonical incomplete-markets models of \citet{aiyagari1994}, \citet{huggett1
 
 \subsection{Contributions}
 
-This paper makes three contributions.
+This paper makes five contributions.
 
-\textbf{First}, we build a DSGE-HA model with occupational choice between workers and entrepreneurs, endogenous firm dynamics with R\&D-driven productivity growth, and Cobb-Douglas production at the firm level. Idiosyncratic productivity and entrepreneurial ability follow AR(1) processes discretized via the Rouwenhorst method \citep{kopeckysuen2010}, while aggregate TFP follows a separate AR(1) process. Household decisions are solved via value function iteration (VFI) on the Bellman equation with a discrete leisure grid.
+\textbf{First}, we build a DSGE-HA model with occupational choice between workers and entrepreneurs, endogenous firm dynamics with R\&D-driven productivity growth, and Cobb-Douglas production at the firm level. Idiosyncratic productivity and entrepreneurial ability follow AR(1) processes discretized via the Rouwenhorst method \citep{kopeckysuen2010}, while aggregate TFP follows a separate AR(1) process. Household decisions are solved via the Endogenous Grid Method (EGM) of \citet{carroll2006} on the Bellman equation, with an intratemporal first-order condition for leisure and Fella (2014) upper envelope for non-monotonicities.
 
 \textbf{Second}, we introduce a mutable constitutional framework with eight rule types---tax schedules, transfer programs, public goods provision, market regulation, firm regulation, voting procedures, property rights, and custom rules---each with sandboxed enforcement code. Constitutional rules feed back into agent budget constraints through taxation, transfers, and regulation. Agents propose, validate, vote on, and amend rules through a formal political process in which voting thresholds themselves are endogenous.
 
-\textbf{Third}, we integrate large language models (LLMs) into the political decision layer. Economic optimization is analytically well-defined (the Bellman equation has a known structure), so we solve it numerically. Political deliberation, by contrast, is open-ended: what tax rate to propose, how to frame a regulation, whether a means-tested transfer is better than a universal one. We delegate these decisions to LLMs that receive structured context about the economy and society, producing proposals and votes that reflect bounded rationality in institutional design. A benchmark mode with purely numerical governance enables controlled comparisons.
+\textbf{Third}, we extend the model to a full HANK framework. Households hold two-asset portfolios of liquid government bonds and illiquid capital with convex adjustment costs \citep{kaplanmollviolante2018}. A government sector issues bonds, finances spending through a budget constraint, and applies fiscal rules for debt sustainability. Nominal rigidities follow the \citet{rotemberg1982} sticky price framework, with a Taylor rule for monetary policy and the Fisher equation linking nominal and real rates. Market clearing uses Walrasian bisection on excess labor demand with heterogeneous firms, and the cross-sectional distribution is tracked via the Kolmogorov Forward Equation using the \citet{young2010} lottery allocation method.
+
+\textbf{Fourth}, we microfound political preferences within the Bellman equation. A political utility function $v(\calC; \theta)$---depending on the constitution and the agent's ideological value vector---enters the household's value function as a constant flow bonus, yielding structurally consistent proposal evaluation and voting decisions derived from the value function.
+
+\textbf{Fifth}, we integrate large language models (LLMs) into the political decision layer. Economic optimization is analytically well-defined (the Bellman equation has a known structure), so we solve it numerically. Political deliberation, by contrast, is open-ended: what tax rate to propose, how to frame a regulation, whether a means-tested transfer is better than a universal one. We delegate these decisions to LLMs that receive Bellman-derived context about the economy and society, producing proposals and votes that reflect bounded rationality in institutional design. A benchmark mode with purely numerical governance enables controlled comparisons.
 
 \subsection{Related Literature}
 
 Our model builds on several strands of the literature. The heterogeneous-agent tradition originates with \citet{bewley1977}, \citet{huggett1993}, and \citet{aiyagari1994}, with \citet{krusellsmith1998} extending to aggregate shocks. \citet{cagettideNardi2006} introduce entrepreneurship into the Bewley framework. We follow their approach of modeling occupational choice with heterogeneous entrepreneurial ability but add endogenous governance and LLM-driven institutional dynamics.
 
-On the computational side, our discretization of AR(1) processes follows \citet{kopeckysuen2010}, who show that the Rouwenhorst method dominates Tauchen's method for highly persistent processes. Our VFI implementation uses exponentially-spaced asset grids and linear interpolation, standard techniques in the quantitative macro toolkit.
+On the computational side, our discretization of AR(1) processes follows \citet{kopeckysuen2010}, who show that the Rouwenhorst method dominates Tauchen's method for highly persistent processes. Our household solver uses the Endogenous Grid Method (EGM) of \citet{carroll2006}, which avoids the inner maximization loop of VFI by inverting the Euler equation on an exogenous savings grid and recovering the endogenous current asset level. We apply the Fella (2014) upper envelope to handle non-monotonicities near kinks in the budget constraint.
+
+The HANK literature originates with \citet{kaplanmollviolante2018}, who show that the interaction of liquid and illiquid assets is crucial for understanding the transmission of monetary policy. Our two-asset extension follows their framework with convex adjustment costs for illiquid capital deposits. The Kolmogorov Forward Equation for distribution tracking uses the \citet{young2010} lottery allocation method for mass conservation on a discrete grid. The nominal block follows \citet{rotemberg1982} for sticky prices, with a Taylor rule satisfying the Taylor principle.
 
 The endogenous institutions literature includes \citet{acemoglurobinson2006}, who study the dynamics of political institutions and economic outcomes, and \citet{acemoglu2005}, who formalize the relationship between political power and economic institutions. Our model operationalizes these ideas computationally: agents with heterogeneous preferences over equality and liberty vote on the very rules that govern economic outcomes.
 
-The use of LLMs as economic agents is nascent. We contribute by showing how LLM-generated political decisions can be integrated into a fully specified general equilibrium model while preserving determinism (temperature zero, seeded RNG) and providing analytical fallback (benchmark mode).
+The use of LLMs as economic agents is nascent. We contribute by showing how LLM-generated political decisions can be integrated into a fully specified general equilibrium model while preserving determinism (temperature zero, seeded RNG) and providing analytical fallback (benchmark mode). A novel element is our microfounded political utility, which enters the Bellman equation and provides structurally consistent preferences that inform LLM-generated political decisions.
 
 \medskip
 
-The remainder of the paper is organized as follows. \Cref{sec:environment} describes the model environment. \Cref{sec:governance} formalizes the constitutional framework. \Cref{sec:equilibrium} defines the recursive competitive equilibrium. \Cref{sec:computation} details the computational method. \Cref{sec:llm} discusses the LLM integration. \Cref{sec:calibration} presents the calibration. \Cref{sec:discussion} discusses results and implications. \Cref{sec:conclusion} concludes.
+The remainder of the paper is organized as follows. \Cref{sec:environment} describes the model environment. \Cref{sec:governance} formalizes the constitutional framework. \Cref{sec:equilibrium} defines the recursive competitive equilibrium. \Cref{sec:computation} details the computational method, including the EGM solver and Bellman-based occupational choice. \Cref{sec:distribution} presents the KFE distribution tracking. \Cref{sec:two_asset} describes the two-asset household structure. \Cref{sec:government} develops the government sector and bond market. \Cref{sec:nominal} introduces nominal rigidities. \Cref{sec:political_utility} develops the microfounded political utility framework. \Cref{sec:llm} discusses the LLM integration. \Cref{sec:calibration} presents the calibration, including the SMM procedure. \Cref{sec:discussion} discusses results and implications. \Cref{sec:conclusion} concludes.
 
 
 % =============================================================================
@@ -572,6 +578,53 @@ The VFI implementation uses NumPy vectorized operations throughout, replacing ne
 \end{remark}
 
 
+\subsection{Endogenous Grid Method (EGM) Solver}\label{sec:egm}
+
+As an alternative to VFI, the household problem can be solved via the Endogenous Grid Method (EGM) of \citet{carroll2006}. EGM avoids the inner maximization loop of VFI by inverting the Euler equation on an exogenous savings grid and recovering the endogenous current asset level. This yields substantial computational gains, particularly when combined with the Fella (2014) upper envelope for handling non-monotonicities near kinks in the budget constraint.
+
+\subsubsection{Asset and Leisure Grids}
+
+The EGM uses a 200-point exponentially-spaced savings grid on $[\underline{a},\, a_{max}]$ with $a_{max} = 1000$:
+\begin{equation}\label{eq:egm_grid}
+  a'_j = \underline{a} + (a_{max} - \underline{a}) \cdot \left(\frac{j}{N_a - 1}\right)^2, \qquad j = 0, 1, \ldots, N_a - 1, \quad N_a = 200.
+\end{equation}
+The quadratic spacing concentrates grid points near the borrowing constraint. A uniform leisure grid of $N_\ell = 51$ points is used for the intratemporal first-order condition.
+
+\subsubsection{Euler Equation Inversion}
+
+For each point on the exogenous savings grid $a'_j$ and each productivity state $z_s$, the EGM proceeds in five steps:
+
+\begin{enumerate}[label=\textit{Step \arabic*.}]
+  \item \textbf{Expected marginal utility.} Compute the right-hand side of the Euler equation:
+  \begin{equation}\label{eq:egm_rhs}
+    RHS(a'_j, z_s) = \beta_d (1+r) \sum_{s'} \Pi(s, s') \cdot u_c\!\left(c^{(n-1)}(a'_j, z_{s'}),\, \ell^{(n-1)}(a'_j, z_{s'}),\, G\right),
+  \end{equation}
+  where $u_c = \alpha_u \cdot c^{\alpha_u - 1} \cdot \ell^{\beta_u} \cdot G^{\gamma_u}$ is the marginal utility of consumption and superscript $(n-1)$ denotes the previous iteration's policy.
+
+  \item \textbf{Euler inversion.} Invert the Euler equation to obtain consumption. Using the intratemporal FOC for leisure, $\ell^* = (\beta_u \cdot c) / (\alpha_u \cdot w \cdot z)$, substitute into the marginal utility condition and solve:
+  \begin{equation}\label{eq:egm_inversion}
+    c(a'_j, z_s) = \left(\frac{RHS}{\alpha_u \cdot \left(\frac{\beta_u}{\alpha_u \cdot w \cdot z_s}\right)^{\beta_u} \cdot G^{\gamma_u}}\right)^{1/(\alpha_u + \beta_u - 1)}.
+  \end{equation}
+  The intratemporal FOC then gives the associated leisure.
+
+  \item \textbf{Endogenous grid.} Back out the current asset level from the budget constraint:
+  \begin{equation}\label{eq:egm_endo}
+    a(a'_j, z_s) = \frac{a'_j + c + T(wz_s(1-\ell)) - Tr - wz_s(1-\ell)}{1 + r}.
+  \end{equation}
+  This produces the \emph{endogenous} grid: the set of current asset levels that are consistent with saving $a'_j$ optimally.
+
+  \item \textbf{Upper envelope.} The endogenous grid may be non-monotone near kinks in the budget constraint. Following \citet{fella2014}, we apply the upper envelope: sort the endogenous grid, remove dominated segments (keeping the higher-consumption branch at each crossing), and interpolate the cleaned policy back to the exogenous grid via monotone piecewise linear interpolation.
+
+  \item \textbf{Constrained region.} For asset levels below the lowest point on the endogenous grid, the borrowing constraint binds: $a' = \underline{a}$. The agent consumes all available resources above $\underline{a}$, and leisure is recomputed from the intratemporal FOC at the constrained consumption level.
+\end{enumerate}
+
+\textbf{Convergence.} The EGM iterates until $\|c^{(n)} - c^{(n-1)}\|_\infty < 10^{-8}$, or a maximum of 500 iterations. An Euler equation residual check verifies accuracy: $\max |1 - c_{Euler}/c_{policy}| < 10^{-6}$ over unconstrained grid points.
+
+\begin{remark}[Value Function Recovery]
+After the EGM converges on the policy functions $c^*(a, z)$ and $\ell^*(a, z)$, the associated value function $V(a, z)$ is recovered by iterating the Bellman operator $V = u(c^*, \ell^*, G) + \lambda \cdot v(\calC; \theta) + \beta_d \, \E[V(a', z')]$ using the fixed policy until convergence. Here $\lambda \cdot v(\calC; \theta)$ is the political flow bonus described in \Cref{sec:political_utility}. The recovered value function is used by the entrepreneurial solver for occupational choice and by the political utility module for proposal evaluation.
+\end{remark}
+
+
 \subsection{Analytical Market Clearing}\label{sec:market_clearing}
 
 Equilibrium prices $(w_t, r_t)$ are computed analytically from the Cobb-Douglas first-order conditions, yielding zero clearing error by construction.
@@ -597,6 +650,37 @@ An earlier version of the model used a tatonnement (price adjustment) algorithm 
 \end{remark}
 
 
+\subsection{Walrasian Market Clearing}\label{sec:walrasian}
+
+When heterogeneous firms are present, the model supports Walrasian equilibrium via bisection on excess labor demand. Unlike the analytical approach, which uses a representative firm, Walrasian clearing respects firm-level heterogeneity in TFP and capital.
+
+\subsubsection{Firm Factor Demands}
+
+Each firm $f$ with TFP $A_f$ and capital $K_f$ has optimal labor demand from the Cobb-Douglas FOC:
+\begin{equation}\label{eq:firm_labor_demand}
+  L_f^*(w) = \left(\frac{(1-\alpha) \cdot A_f \cdot K_f^{\alpha}}{w}\right)^{1/\alpha}.
+\end{equation}
+Aggregate labor demand $L^d(w) = \sum_f L_f^*(w)$ is strictly decreasing in $w$, guaranteeing a unique equilibrium wage.
+
+\subsubsection{Bisection Algorithm}
+
+The equilibrium wage $w^*$ satisfies the excess labor demand condition:
+\begin{equation}\label{eq:excess_labor}
+  ELD(w) = L^d(w) - L^s = 0,
+\end{equation}
+where $L^s = \sum_{i: o_{it} = W} z_{it} (1 - \ell_{it})$ is aggregate effective labor supply from workers (excluding entrepreneurs, whose labor is embedded in firm production). The bisection algorithm:
+\begin{enumerate}
+  \item Bracket: find $w_{lo}$ with $ELD > 0$ and $w_{hi}$ with $ELD < 0$ (doubling $w_{hi}$ up to 50 times if needed).
+  \item Bisect: iterate $w_{mid} = (w_{lo} + w_{hi})/2$, updating the bracket until $|ELD(w_{mid})| < 10^{-8}$ or 100 iterations.
+\end{enumerate}
+
+Given $w^*$, aggregate output is $Y = \sum_f A_f K_f^{\alpha} (L_f^*)^{1-\alpha}$, and the interest rate follows from the aggregate marginal product of capital: $r = \alpha Y / K_{total} - \delta$, where $K_{total} = \sum_f K_f$.
+
+\begin{remark}[Fallback]
+When no firms are present (e.g., in early periods before entrepreneurial entry), Walrasian clearing falls back to the representative-firm analytical formula of \Cref{sec:market_clearing}.
+\end{remark}
+
+
 \subsection{Entrepreneurial Decision Solver}\label{sec:entre_solver}
 
 The entrepreneurial solver implements the utility-based occupational choice described in \Cref{sec:entry_exit}. The algorithm proceeds in four stages:
@@ -608,6 +692,31 @@ The entrepreneurial solver implements the utility-based occupational choice desc
 \end{enumerate}
 
 The solver also receives the current per-capita public goods level $G$ as input, since $G$ enters the utility function used for the occupational comparison.
+
+
+\subsection{Bellman-Based Occupational Choice}\label{sec:bellman_occ}
+
+When the Bellman occupational choice mode is active, the perpetuity-based firm value is replaced by a proper Bellman equation. The firm value $V^F(e, K)$ for all ability grid points is computed by solving:
+\begin{equation}\label{eq:firm_bellman}
+  V^F = (I - \beta_f \Pi_e)^{-1} \cdot \boldsymbol{\pi}(K),
+\end{equation}
+where $I$ is the $n_e \times n_e$ identity matrix, $\Pi_e$ is the ability transition matrix, $\beta_f$ is the firm discount factor, and $\boldsymbol{\pi}(K) = (\pi(e_1, K), \ldots, \pi(e_{n_e}, K))^\top$ is the vector of single-period profits at each ability grid point. The matrix $(I - \beta_f \Pi_e)^{-1}$ is pre-computed once at initialization and cached, making repeated firm value queries a single matrix-vector multiply. A condition number check ($< 10^{12}$) guards against near-singularity, falling back to the perpetuity formula if violated.
+
+\subsubsection{Worker Value from VFI}
+
+In Bellman mode, the worker value $V^W(a_i, z_i)$ is read directly from the VFI- or EGM-solved value function via linear interpolation on the asset grid at the household's actual state $(a_{it}, z_{it})$, rather than using the perpetuity approximation. This ensures exact consistency between the household optimization and the occupational choice comparison.
+
+\subsubsection{Entrepreneur Leisure from FOC}
+
+In Bellman mode, the entrepreneur's leisure is derived from the intratemporal FOC rather than hardcoded:
+\begin{equation}\label{eq:entre_foc_leisure}
+  \ell^*_E = \frac{\beta_u}{\alpha_u + \beta_u},
+\end{equation}
+which is the Cobb-Douglas time allocation that maximizes utility conditional on the profit stream, independent of prices. The continuation value uses $\max(V^W, V^F_{cont})$ to capture the option value of switching occupations each period.
+
+\subsubsection{Golden-Section Search for Capital}
+
+Optimal capital is found via golden-section search over $[K_{min}, a_{it} - F]$, evaluating the Bellman firm value at each candidate. The algorithm guarantees 50+ function evaluations for robust convergence, replacing the 20-point grid search used in legacy mode.
 
 
 \subsection{Period Lifecycle}\label{sec:lifecycle}
@@ -632,6 +741,225 @@ Each period $t$ executes nine steps in a fixed order, guaranteeing determinism.
 \begin{remark}[State Immutability]
 Steps 1--9 operate on deep copies of the previous period's state. Agents never mutate global state directly; they return decisions that are validated and applied atomically in Step~8. This design prevents race conditions and ensures determinism (PROP-001).
 \end{remark}
+
+
+% =============================================================================
+\section{Distribution Tracking via the Kolmogorov Forward Equation}\label{sec:distribution}
+% =============================================================================
+
+When the distribution mode is set to \texttt{kfe}, the model tracks the cross-sectional joint distribution of households over assets and productivity states on a discrete grid, rather than simulating individual agents. This approach, based on the Kolmogorov Forward Equation (KFE), is standard in the heterogeneous-agent literature for computing stationary distributions and aggregates.
+
+\subsection{Distribution Object}
+
+The distribution is a probability mass array $\mu(a_j, z_s)$ of dimension $N_a \times N_z$, where $\mu(a_j, z_s)$ represents the fraction of agents with assets $a_j$ and productivity $z_s$. The array satisfies $\sum_{j,s} \mu(a_j, z_s) = 1$ at all times (mass conservation).
+
+\subsection{Young (2010) Lottery Allocation}\label{sec:young_lottery}
+
+The KFE is advanced one period using the lottery allocation method of \citet{young2010}. For each grid cell $(a_j, z_s)$ with mass $\mu(a_j, z_s)$:
+
+\begin{enumerate}
+  \item \textbf{Policy lookup.} The savings policy gives $a' = g(a_j, z_s)$, the next-period asset level.
+  \item \textbf{Grid bracket.} Find the bracket $a_{lo} \leq a' \leq a_{hi}$ on the asset grid.
+  \item \textbf{Lottery weight.} Compute the interpolation weight for the upper bracket:
+  \begin{equation}\label{eq:lottery_weight}
+    \omega = \frac{a' - a_{lo}}{a_{hi} - a_{lo}}.
+  \end{equation}
+  \item \textbf{Mass allocation.} For each target productivity state $z_{s'}$, allocate mass using both the lottery weight and the Markov transition probability:
+  \begin{align}
+    \mu'(a_{hi}, z_{s'}) &\mathrel{+}= \omega \cdot \Pi(z_s, z_{s'}) \cdot \mu(a_j, z_s), \label{eq:kfe_hi} \\
+    \mu'(a_{lo}, z_{s'}) &\mathrel{+}= (1 - \omega) \cdot \Pi(z_s, z_{s'}) \cdot \mu(a_j, z_s). \label{eq:kfe_lo}
+  \end{align}
+\end{enumerate}
+
+The inner loops are vectorized using \texttt{np.add.at} for scatter-add operations, and a mass conservation check with renormalization is applied after each step (tolerance $10^{-12}$).
+
+\subsection{Stationary Distribution}
+
+The stationary (ergodic) distribution $\mu^*$ is computed by initializing with a uniform distribution and iterating the KFE forward step until convergence:
+\begin{equation}\label{eq:kfe_convergence}
+  \|\mu^{(n+1)} - \mu^{(n)}\|_1 < \epsilon_{KFE}, \qquad \epsilon_{KFE} = 10^{-10},
+\end{equation}
+with a maximum of 10{,}000 iterations. The stationary distribution is used for computing long-run aggregates and calibration targets.
+
+\subsection{Aggregate Statistics from the Distribution}
+
+Given the distribution $\mu$, aggregate quantities are computed as weighted sums:
+\begin{equation}\label{eq:kfe_aggregate}
+  X = \sum_{j,s} \mu(a_j, z_s) \cdot f(a_j, z_s),
+\end{equation}
+where $f$ is any policy function (consumption, labor supply, savings). The Gini coefficient is computed from the marginal wealth distribution $\mu_a(a_j) = \sum_s \mu(a_j, z_s)$ using the trapezoidal Lorenz curve formula:
+\begin{equation}\label{eq:kfe_gini}
+  G_{KFE} = 1 - 2 \int_0^1 L(p)\, dp,
+\end{equation}
+where $L(p)$ is the Lorenz curve constructed from cumulative wealth shares. Additional distributional statistics---percentiles, top wealth shares, and mean wealth---are computed directly from $\mu_a$.
+
+\subsection{Agent Sampling}
+
+For compatibility with agent-level operations (e.g., governance and LLM interaction), individual agents can be sampled from the distribution via inverse CDF sampling on the flattened joint distribution, using the simulation's seeded RNG for determinism.
+
+
+% =============================================================================
+\section{Two-Asset Household Structure}\label{sec:two_asset}
+% =============================================================================
+
+When two-asset mode is active, the single-asset framework is extended to a two-asset model following \citet{kaplanmollviolante2018}. Households hold two types of assets: liquid government bonds $b$ and illiquid physical capital $k$.
+
+\subsection{Portfolio Structure}
+
+The household state is augmented from $(a, z, e, o)$ to $(b, k, z, e, o)$, where $b \in [b_{min}, \infty)$ is liquid bond holdings (which may be negative for unsecured credit when $b_{min} < 0$) and $k \in [0, \infty)$ is illiquid capital. Total wealth is $a = b + k$.
+
+Each period, the household chooses a deposit $d = k' - k$ into the illiquid asset, subject to a convex adjustment cost:
+\begin{equation}\label{eq:adj_cost}
+  \chi(d, k) = \chi_0 |d| + \chi_1 \frac{d^2}{\max(k, 1)},
+\end{equation}
+where $\chi_0 \geq 0$ is the linear component and $\chi_1 \geq 0$ is the quadratic component. The denominator $\max(k, 1)$ prevents division by zero for agents with no illiquid holdings.
+
+\subsection{Budget Constraint}
+
+The two-asset budget constraint for a worker is:
+\begin{equation}\label{eq:two_asset_budget}
+  b' = (1 + r^b) b + wz(1-\ell) - c - T(y) + Tr - d - \chi(d, k),
+\end{equation}
+where $r^b$ is the bond rate from the Fisher equation and $d + \chi(d, k)$ is the total cost of adjusting illiquid holdings.
+
+\subsection{``Wealthy Hand-to-Mouth'' Agents}
+
+A key feature of the two-asset model is the emergence of ``wealthy hand-to-mouth'' agents: households with substantial illiquid wealth (e.g., housing or business capital) but little liquid wealth. These agents have high marginal propensities to consume (MPCs) out of transitory income despite being wealthy in total, because accessing their illiquid assets is costly. The distribution of agents across the $(b, k)$ space---and in particular the mass of agents near $b \approx b_{min}$ with $k > 0$---is a key determinant of the economy's response to fiscal and monetary policy shocks.
+
+\subsection{Nested EGM}
+
+In two-asset mode, the EGM solver operates on a three-dimensional state space $(b, k, z)$. The solution uses a nested approach: for each illiquid capital level on a 100-point grid, the one-dimensional EGM for the liquid asset is solved conditional on the deposit choice. A 30-point deposit grid is used for the outer portfolio decision. The overall structure follows the nested EGM approach for two-asset models.
+
+
+% =============================================================================
+\section{Government Sector and Bond Market}\label{sec:government}
+% =============================================================================
+
+The government sector issues bonds to finance spending and transfers in excess of tax revenue. A fiscal rule ensures long-run debt sustainability.
+
+\subsection{Government Budget Constraint}
+
+The government's flow budget constraint is:
+\begin{equation}\label{eq:govt_budget}
+  B_{t+1} = (1 + r^b_t) B_t + G_t + Tr_t - T_t,
+\end{equation}
+where $B_t$ is outstanding government debt (bonds), $r^b_t$ is the bond interest rate, $G_t$ is public goods spending, $Tr_t$ is total transfers, and $T_t$ is total tax revenue. When tax revenue exceeds spending plus debt service, debt decreases; otherwise it increases.
+
+\subsection{Bond Market Clearing}\label{sec:bond_clearing}
+
+The bond rate $r^b_t$ is determined by clearing the bond market. Aggregate household bond demand is modeled as a logistic function of the spread between the bond rate and the capital rate:
+\begin{equation}\label{eq:bond_demand}
+  B^d(r^b) = \sum_{i=1}^{N} a_{it} \cdot \sigma(s \cdot (r^b - r)),
+\end{equation}
+where $\sigma(\cdot)$ is the logistic function, $s = 5$ is the sensitivity parameter, and $r$ is the capital market interest rate (the opportunity cost of holding bonds).
+
+The equilibrium bond rate $r^{b*}$ satisfies $B^d(r^{b*}) = B_t$ and is found via bisection on $r^b \in [-0.5, 1.0]$ with tolerance $10^{-8}$ and a maximum of 100 iterations.
+
+\subsection{Fiscal Rule}\label{sec:fiscal_rule}
+
+To prevent explosive debt paths, a fiscal rule automatically adjusts tax rates when the debt-to-GDP ratio exceeds a threshold:
+\begin{equation}\label{eq:fiscal_rule}
+  \Delta \tau_t =
+  \begin{cases}
+    \tau_{adj} & \text{if } B_t / Y_t > \bar{B}, \\
+    0 & \text{otherwise},
+  \end{cases}
+\end{equation}
+where $\bar{B}$ is the debt-to-GDP threshold (default 1.5) and $\tau_{adj}$ is the tax rate increment (default 0.01). A safety cap flags critical warnings when $B_t / Y_t > 5$, and governance changes are frozen to prevent further fiscal deterioration.
+
+
+% =============================================================================
+\section{Nominal Rigidities}\label{sec:nominal}
+% =============================================================================
+
+When nominal rigidities are enabled, the model incorporates sticky prices, a monetary policy rule, and the Fisher equation linking nominal and real rates.
+
+\subsection{Rotemberg Sticky Prices}\label{sec:rotemberg}
+
+Price adjustment follows \citet{rotemberg1982}, with firms facing a quadratic cost of changing prices. In the symmetric equilibrium, the New Keynesian Phillips Curve (NKPC) is:
+\begin{equation}\label{eq:nkpc}
+  \phi_p \pi_t (\pi_t - \bar{\pi}) = (1 - \varepsilon) + \varepsilon \cdot mc_t + \beta_d \phi_p \E_t\!\left[\pi_{t+1}(\pi_{t+1} - \bar{\pi}) \frac{Y_{t+1}}{Y_t}\right],
+\end{equation}
+where $\phi_p$ is the Rotemberg price adjustment cost, $\pi_t$ is inflation, $\bar{\pi}$ is the inflation target, $\varepsilon$ is the elasticity of substitution between varieties, and $mc_t = w_t / A_t$ is the real marginal cost.
+
+This is a quadratic equation in $\pi_t$. Given expectations $\E_t[\pi_{t+1}]$ and $\E_t[Y_{t+1}]$, the NKPC is solved for the inflation rate $\pi_t$ that is closest to the target $\bar{\pi}$ (the stable root).
+
+\subsection{Taylor Rule}\label{sec:taylor}
+
+Monetary policy follows a Taylor rule \citep{taylor1993}:
+\begin{equation}\label{eq:taylor}
+  i_t = r^{nat} + \phi_\pi (\pi_t - \bar{\pi}) + \phi_y \cdot gap_t,
+\end{equation}
+where $i_t$ is the nominal interest rate, $r^{nat}$ is the natural (real) interest rate (proxied by the capital market rate), $\phi_\pi > 1$ is the inflation coefficient satisfying the Taylor principle, $\phi_y \geq 0$ is the output gap coefficient, and $gap_t = (Y_t - \bar{Y})/\bar{Y}$ is the output gap relative to steady-state output $\bar{Y}$.
+
+\subsection{Fisher Equation}
+
+The real bond rate is determined by the Fisher equation:
+\begin{equation}\label{eq:fisher}
+  r^b_t = \frac{1 + i_t}{1 + \E_t[\pi_{t+1}]} - 1,
+\end{equation}
+linking the nominal rate from the Taylor rule and inflation expectations to the real return on government bonds that enters household budget constraints.
+
+\subsection{Nominal State and Convergence}
+
+The nominal block tracks a \texttt{NominalState} object each period consisting of the price level $P_t$, inflation $\pi_t$, nominal rate $i_t$, real bond rate $r^b_t$, expected inflation $\E_t[\pi_{t+1}]$, and marginal cost $mc_t$.
+
+The three equations---NKPC, Taylor rule, and Fisher equation---form a simultaneous system. It is solved via an outer iteration:
+\begin{enumerate}
+  \item Initialize expected inflation using adaptive expectations: $\E[\pi_{t+1}] = 0.9 \cdot \pi_{t-1}$.
+  \item Compute marginal cost $mc_t = w_t / A_t$.
+  \item Solve Taylor rule $\to$ $i_t$, Fisher equation $\to$ $r^b_t$, NKPC $\to$ $\pi_t$.
+  \item Update $\E[\pi_{t+1}] = 0.9 \cdot \pi_t$ and iterate until $|\pi_t^{(k)} - \pi_t^{(k-1)}| < 10^{-6}$ or 50 iterations.
+\end{enumerate}
+
+The price level evolves as $P_t = P_{t-1}(1 + \pi_t)$.
+
+
+% =============================================================================
+\section{Microfounded Political Utility}\label{sec:political_utility}
+% =============================================================================
+
+A key contribution is the microfoundation of political preferences within the household's Bellman equation. Rather than treating political decisions as ad hoc or purely ideological, we embed a political utility function in the agent's value function, yielding structurally consistent political behavior derived from economic self-interest and ideology.
+
+\subsection{Political Utility Function}
+
+Each agent $i$ has a political utility function:
+\begin{equation}\label{eq:political_utility}
+  v(\calC; \theta_i) = \theta_i^{eq} \cdot f^{eq}(\calC) + \theta_i^{lib} \cdot f^{lib}(\calC),
+\end{equation}
+where $\theta_i^{eq}$ and $\theta_i^{lib}$ are the agent's value vector weights (from the ideological position described in \Cref{sec:preferences}), and:
+\begin{align}
+  f^{eq}(\calC) &= -\text{Gini}(\calC), \label{eq:f_eq} \\
+  f^{lib}(\calC) &= -\tau(\calC), \label{eq:f_lib}
+\end{align}
+where $\text{Gini}(\calC)$ is the Gini coefficient under the current constitution (or a structural proxy when simulation-level Gini is unavailable) and $\tau(\calC)$ is the effective tax rate. Equality-oriented agents prefer lower Gini; liberty-oriented agents prefer lower taxes.
+
+\subsection{Bellman Integration}
+
+The political utility enters the household's Bellman equation as a constant flow bonus:
+\begin{equation}\label{eq:bellman_political}
+  V(a, z) = \max_{c, \ell} \left\{u(c, \ell, G) + \lambda \cdot v(\calC; \theta) + \beta_d \, \E[V(a', z')]\right\},
+\end{equation}
+where $\lambda \geq 0$ is the weight on political utility (default 0.05). Since the constitution $\calC$ is fixed between governance periods, $v(\calC; \theta)$ is a constant that does not affect the consumption-savings-labor first-order conditions but does affect the \emph{level} of the value function. This level matters for:
+\begin{itemize}
+  \item Occupational choice (comparing $V^W$ vs.\ $V^E$ under different constitutions);
+  \item Proposal evaluation (comparing $V$ under current vs.\ proposed rules);
+  \item Voting decisions (support proposals that increase $V$).
+\end{itemize}
+
+\subsection{Proposal Evaluation via Value Function Comparison}
+
+When evaluating a proposed constitutional change $\calC' \neq \calC$, the welfare gain for agent $i$ is:
+\begin{equation}\label{eq:proposal_eval}
+  \Delta V_i = \underbrace{\frac{\lambda}{1 - \beta_d}\left[v(\calC'; \theta_i) - v(\calC; \theta_i)\right]}_{\text{political component}} + \underbrace{\left(-\frac{\Delta\tau \cdot y_i}{1 - \beta_d}\right)}_{\text{economic component}},
+\end{equation}
+where the political component is the capitalized (perpetuity) value of the political utility change, and the economic component approximates the disposable income effect of the tax rate change $\Delta\tau = \tau(\calC') - \tau(\calC)$.
+
+Agent $i$ supports the proposal if $\Delta V_i > 0$. When \texttt{pure\_bellman\_politics} is active, this comparison replaces the LLM for all political decisions, yielding fully microfounded governance dynamics.
+
+\subsection{LLM Integration with Bellman Context}
+
+When the LLM is used for political decisions, the Bellman-derived preference is provided as structured context: the recommendation (support/oppose), the magnitude of $\Delta V$, and the decomposition into political and economic components. The LLM may override the Bellman recommendation for strategic or coalition reasons; such deviations are logged for analysis.
 
 
 % =============================================================================
@@ -746,12 +1074,12 @@ Initial wealth std & $\sigma_{a_0}$ & 30.0 & --- \\
 \multicolumn{4}{l}{\textit{Idiosyncratic shocks}} \\
 Productivity persistence & $\rho_z$ & 0.90 & AR(1) \\
 Productivity volatility & $\sigma_z$ & 0.20 & Innovation s.d. \\
-Grid points & $N_z$ & 5 & Rouwenhorst \\
+Grid points & $N_z$ & 7 & Rouwenhorst \\
 \midrule
 \multicolumn{4}{l}{\textit{Entrepreneurial}} \\
 Ability persistence & $\rho_e$ & 0.85 & AR(1) \\
 Ability volatility & $\sigma_e$ & 0.30 & Innovation s.d. \\
-Grid points & $N_e$ & 5 & Rouwenhorst \\
+Grid points & $N_e$ & 7 & Rouwenhorst \\
 Entry cost & $F$ & 5.0 & Sunk cost \\
 Minimum capital & $\underline{K}$ & 10.0 & --- \\
 Firm discount factor & $\beta_f$ & 0.95 & Perpetuity discounting \\
@@ -767,15 +1095,40 @@ TFP improvement mean & $\mu_{rd}$ & 0.05 & --- \\
 TFP improvement std & $\sigma_{rd}$ & 0.02 & --- \\
 \midrule
 \multicolumn{4}{l}{\textit{Market clearing}} \\
-Method & --- & Analytical & Cobb-Douglas FOCs \\
-Wage floor & --- & $10^{-6}$ & Numerical guard \\
-Interest rate floor & --- & $-0.99$ & Numerical guard \\
+Method & --- & Analytical/Walrasian & Configurable \\
+Walrasian bisection tol & --- & $10^{-8}$ & --- \\
+Walrasian max iter & --- & 100 & --- \\
 \midrule
-\multicolumn{4}{l}{\textit{VFI}} \\
+\multicolumn{4}{l}{\textit{EGM solver}} \\
+Asset grid points & $N_a$ & 200 & Exponential spacing \\
+Leisure grid points & $N_\ell$ & 51 & Uniform \\
+Convergence tolerance & $\epsilon_{EGM}$ & $10^{-6}$ & Sup-norm \\
+\midrule
+\multicolumn{4}{l}{\textit{VFI (fallback)}} \\
 Asset grid points & $N_a$ & 100 & Exponential spacing \\
 Leisure grid points & $N_\ell$ & 21 & Uniform \\
 Max iterations & --- & 500 & --- \\
 Convergence tolerance & $\epsilon_{VFI}$ & $10^{-6}$ & Sup-norm \\
+\midrule
+\multicolumn{4}{l}{\textit{Two-asset (optional)}} \\
+Linear adj.\ cost & $\chi_0$ & 0.01 & $\geq 0$ \\
+Quadratic adj.\ cost & $\chi_1$ & 0.005 & $\geq 0$ \\
+Liquid borrowing limit & $b_{min}$ & 0.0 & --- \\
+\midrule
+\multicolumn{4}{l}{\textit{Government (optional)}} \\
+Initial debt & $B_0$ & 0.0 & $\geq 0$ \\
+Debt/GDP threshold & $\bar{B}$ & 1.5 & $> 0$ \\
+Fiscal rule adj. & $\tau_{adj}$ & 0.01 & $(0, 1)$ \\
+\midrule
+\multicolumn{4}{l}{\textit{Nominal (optional)}} \\
+Rotemberg cost & $\phi_p$ & 100 & $\geq 0$ \\
+Taylor infl.\ coeff. & $\phi_\pi$ & 1.5 & $> 1$ \\
+Taylor output coeff. & $\phi_y$ & 0.125 & $\geq 0$ \\
+Inflation target & $\bar{\pi}$ & 0.02 & --- \\
+Elasticity of sub. & $\varepsilon$ & 6.0 & $> 1$ \\
+\midrule
+\multicolumn{4}{l}{\textit{Political utility (optional)}} \\
+Political weight & $\lambda$ & 0.05 & $[0, 1]$ \\
 \midrule
 \multicolumn{4}{l}{\textit{Governance}} \\
 Default tax rate & $\tau_0$ & 0.10 & Initial flat tax (10\%) \\
@@ -791,7 +1144,38 @@ Cache enabled & --- & Yes & --- \\
 \end{tabular}
 \end{table}
 
-The capital share $\alpha = 0.33$ and depreciation rate $\delta = 0.10$ are standard in the macro literature. The productivity process parameters ($\rho_z = 0.9$, $\sigma_z = 0.2$) are in the range estimated by \citet{storesletten2004} for annual earnings. The entrepreneurial ability process is somewhat more volatile ($\sigma_e = 0.3$) and less persistent ($\rho_e = 0.85$), reflecting the higher turnover in business outcomes relative to labor earnings. The discount factor $\beta_d = 0.95$ and the Cobb-Douglas utility weights ($\alpha_u = 0.4$, $\beta_u = 0.35$, $\gamma_u = 0.25$) are within the range of estimated preferences in the literature on labor supply and public goods valuation. The entrepreneur leisure parameter $\ell_E = 0.2$ reflects the substantially higher time commitment of running a firm, and the firm discount factor $\beta_f = 0.95$ matches the household discount factor. The default tax rate of 10\% provides a non-trivial initial fiscal environment, and the proposal skip probability of 0.85 ensures a moderate density of proposals in benchmark mode.
+The capital share $\alpha = 0.33$ and depreciation rate $\delta = 0.10$ are standard in the macro literature. The productivity process parameters ($\rho_z = 0.9$, $\sigma_z = 0.2$) are in the range estimated by \citet{storesletten2004} for annual earnings. The Rouwenhorst discretization uses 7 grid points for both productivity and ability, which \citet{kopeckysuen2010} show provides adequate approximation for persistence above 0.8. The entrepreneurial ability process is somewhat more volatile ($\sigma_e = 0.3$) and less persistent ($\rho_e = 0.85$), reflecting the higher turnover in business outcomes relative to labor earnings.
+
+The discount factor $\beta_d = 0.95$ and the Cobb-Douglas utility weights ($\alpha_u = 0.4$, $\beta_u = 0.35$, $\gamma_u = 0.25$) are within the range of estimated preferences in the literature on labor supply and public goods valuation. The EGM solver uses a 200-point exponential asset grid and 51-point leisure grid, providing substantially finer resolution than the VFI fallback.
+
+The two-asset adjustment costs ($\chi_0 = 0.01$, $\chi_1 = 0.005$) follow \citet{kaplanmollviolante2018} in generating a realistic mass of ``wealthy hand-to-mouth'' agents. The Rotemberg price adjustment cost $\phi_p = 100$ and Taylor rule coefficients ($\phi_\pi = 1.5$, $\phi_y = 0.125$) are standard in the New Keynesian literature. The political utility weight $\lambda = 0.05$ is set conservatively so that political preferences matter for institutional choice but do not dominate economic decisions.
+
+
+\subsection{Simulated Method of Moments (SMM) Calibration}\label{sec:smm}
+
+For systematic parameter estimation, the model supports Simulated Method of Moments (SMM) calibration. The calibration procedure matches model-implied moments to empirical targets by minimizing a weighted sum of squared deviations.
+
+\subsubsection{Calibration Targets}
+
+The default calibration targets are:
+\begin{itemize}
+  \item Wealth Gini coefficient: 0.80 (consistent with U.S.\ SCF data).
+  \item Entrepreneur share: 0.10 (fraction of population).
+  \item Top 10\% wealth share: 0.70.
+\end{itemize}
+Additional targets for the two-asset extension include the median marginal propensity to consume (MPC) and the liquid-to-illiquid wealth ratio.
+
+\subsubsection{SMM Objective}
+
+The SMM objective function is:
+\begin{equation}\label{eq:smm}
+  Q(\theta) = \sum_{m \in \calM} \omega_m \left(\frac{\hat{m}(\theta) - m^{data}}{m^{data}}\right)^2,
+\end{equation}
+where $\theta$ is the parameter vector, $\hat{m}(\theta)$ is the model-implied moment, $m^{data}$ is the empirical target, and $\omega_m$ is the moment weight (default: equal weights). The relative deviation $(\hat{m} - m^{data})/m^{data}$ ensures scale-invariance across moments.
+
+\subsubsection{Optimization}
+
+The SMM objective is minimized via \texttt{scipy.optimize.minimize} using the Nelder-Mead (simplex) method, which is derivative-free and robust to the discontinuities that arise from the simulation. The calibrated parameter vector typically includes the discount factor $\beta_d$, productivity volatility $\sigma_z$, entry cost $F$, and borrowing limit $\underline{a}$. Parameters are projected onto feasible bounds at each evaluation (e.g., $\beta_d \in [0.80, 0.999]$, $\sigma_z \in [0.05, 1.0]$, $F \in [0.1, 50.0]$). Failed simulations are penalized with a large objective value ($10^{10}$) to steer the optimizer away from unstable regions.
 
 
 % =============================================================================
@@ -855,11 +1239,11 @@ The Pareto score is $1$ minus the fraction of pairs where such an improvement ex
 \section{Conclusion}\label{sec:conclusion}
 % =============================================================================
 
-We have developed a heterogeneous-agent model in which governance institutions are fully endogenous. Agents with heterogeneous productivity, ability, and preferences simultaneously make economic decisions (consumption, savings, labor, entrepreneurship) and political decisions (proposals, votes on constitutional rules). The economic and political layers are tightly coupled: constitutional rules determine fiscal policy, which enters budget constraints and affects equilibrium prices, which in turn shape the political preferences that generate new proposals.
+We have developed a Heterogeneous Agent New Keynesian (HANK) model in which governance institutions are fully endogenous. Agents with heterogeneous productivity, ability, and preferences simultaneously make economic decisions (consumption, savings, labor, entrepreneurship, portfolio allocation) and political decisions (proposals, votes on constitutional rules). The economic and political layers are tightly coupled: constitutional rules determine fiscal policy, which enters budget constraints and affects equilibrium prices, which in turn shape the political preferences that generate new proposals.
 
-The computational framework combines value function iteration for economic optimization with LLM-augmented decision-making for political deliberation. This asymmetric design reflects a genuine asymmetry in the underlying problems: economic optimization has well-defined structure (the Bellman equation), while institutional design is genuinely open-ended.
+The computational framework combines the Endogenous Grid Method for household optimization with Walrasian market clearing, Kolmogorov Forward Equation distribution tracking, a government sector with bond market, Rotemberg nominal rigidities with a Taylor rule, microfounded political utility in the Bellman equation, and LLM-augmented decision-making for political deliberation. This design reflects a genuine asymmetry in the underlying problems: economic optimization has well-defined structure (the Bellman equation), while institutional design is genuinely open-ended.
 
-Several extensions merit future investigation. First, the model could incorporate a richer set of agent interactions, including coalition formation and bargaining. Second, the LLM's ``preferences'' could be calibrated against survey data on political attitudes. Third, the model could be scaled to larger populations using the Krusell-Smith algorithm for tracking the wealth distribution. Fourth, the constitutional framework could be extended to include judicial review and enforcement uncertainty.
+Several extensions merit future investigation. First, the model could incorporate a richer set of agent interactions, including coalition formation and bargaining. Second, the LLM's ``preferences'' could be calibrated against survey data on political attitudes. Third, the constitutional framework could be extended to include judicial review and enforcement uncertainty. Fourth, the life-cycle/OLG structure could be added for richer demographic dynamics.
 
 
 % =============================================================================
@@ -905,8 +1289,8 @@ In practice, with $\beta_d = 0.95$, the error after $n$ iterations is bounded by
 The discretization introduces approximation error from three sources:
 \begin{enumerate}
   \item \textbf{Asset grid:} The exponential spacing provides higher resolution near $\underline{a}$ where marginal utility is highest. Linear interpolation between grid points introduces $O(\Delta a^2)$ error.
-  \item \textbf{Leisure grid:} The uniform 21-point grid introduces at most $O(1/N_\ell)$ error in the leisure choice.
-  \item \textbf{Consumption grid:} The 11-point inner grid for consumption optimization provides a coarse approximation that could be refined at the cost of computation time.
+  \item \textbf{Leisure grid:} The uniform grid introduces at most $O(1/N_\ell)$ error in the leisure choice. The EGM solver uses 51 points (vs.\ 21 for VFI).
+  \item \textbf{Consumption:} In VFI mode, an 11-point inner grid provides a coarse approximation. The EGM solver (\Cref{sec:egm}) eliminates this grid entirely by inverting the Euler equation, yielding exact consumption policy functions conditional on the asset grid.
 \end{enumerate}
 
 
@@ -927,12 +1311,12 @@ Core & \texttt{seed} & 42 & integer \\
 \midrule
 Shocks & \texttt{rho\_z} & 0.9 & $(0, 1)$ \\
 Shocks & \texttt{sigma\_z} & 0.2 & $> 0$ \\
-Shocks & \texttt{num\_z\_states} & 5 & $[2, 50]$ \\
+Shocks & \texttt{num\_z\_states} & 7 & $[2, 50]$ \\
 Shocks & \texttt{rho\_a} & 0.95 & $(0, 1)$ \\
 Shocks & \texttt{sigma\_a} & 0.01 & $> 0$ \\
 Shocks & \texttt{rho\_e} & 0.85 & $(0, 1)$ \\
 Shocks & \texttt{sigma\_e} & 0.3 & $> 0$ \\
-Shocks & \texttt{num\_e\_states} & 5 & $[2, 50]$ \\
+Shocks & \texttt{num\_e\_states} & 7 & $[2, 50]$ \\
 Shocks & \texttt{enable\_preference\_shocks} & False & boolean \\
 \midrule
 Production & \texttt{alpha} & 0.33 & $(0, 1)$ \\
@@ -971,6 +1355,30 @@ LLM & \texttt{benchmark\_mode} & False & boolean \\
 R\&D & \texttt{rd\_success\_base\_prob} & 0.1 & $[0, 1]$ \\
 R\&D & \texttt{rd\_tfp\_improvement\_mean} & 0.05 & $> 0$ \\
 R\&D & \texttt{rd\_tfp\_improvement\_std} & 0.02 & $\geq 0$ \\
+\midrule
+Solver & \texttt{solver\_method} & egm & vfi/vfi\_numpy/egm \\
+Distribution & \texttt{distribution\_mode} & individual & individual/kfe \\
+Distribution & \texttt{kfe\_convergence\_tolerance} & $10^{-10}$ & $> 0$ \\
+Distribution & \texttt{kfe\_max\_iterations} & 10000 & $\geq 1$ \\
+\midrule
+Two-asset & \texttt{two\_asset\_mode} & False & boolean \\
+Two-asset & \texttt{chi\_0} & 0.01 & $\geq 0$ \\
+Two-asset & \texttt{chi\_1} & 0.005 & $\geq 0$ \\
+Two-asset & \texttt{b\_min} & 0.0 & --- \\
+\midrule
+Government & \texttt{initial\_debt} & 0.0 & $\geq 0$ \\
+Government & \texttt{debt\_gdp\_max} & 1.5 & $> 0$ \\
+Government & \texttt{fiscal\_rule\_adjustment} & 0.01 & $(0, 1)$ \\
+\midrule
+Nominal & \texttt{nominal\_rigidities} & False & boolean \\
+Nominal & \texttt{rotemberg\_cost} & 100.0 & $\geq 0$ \\
+Nominal & \texttt{taylor\_phi\_pi} & 1.5 & $> 1$ \\
+Nominal & \texttt{taylor\_phi\_y} & 0.125 & $\geq 0$ \\
+Nominal & \texttt{inflation\_target} & 0.02 & --- \\
+Nominal & \texttt{elasticity\_sub} & 6.0 & $> 1$ \\
+\midrule
+Political & \texttt{political\_lambda} & 0.05 & $[0, 1]$ \\
+Political & \texttt{pure\_bellman\_politics} & False & boolean \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -1054,6 +1462,36 @@ Krusell, P. and Smith, A.~A. (1998).
 Storesletten, K., Telmer, C.~I., and Yaron, A. (2004).
 \newblock Consumption and risk sharing over the life cycle.
 \newblock \textit{Journal of Monetary Economics}, 51(3):609--633.
+
+\bibitem[Carroll(2006)]{carroll2006}
+Carroll, C.~D. (2006).
+\newblock The method of endogenous gridpoints for solving dynamic stochastic optimization problems.
+\newblock \textit{Economics Letters}, 91(3):312--320.
+
+\bibitem[Fella(2014)]{fella2014}
+Fella, G. (2014).
+\newblock A generalized endogenous grid method for non-smooth and non-concave problems.
+\newblock \textit{Review of Economic Dynamics}, 17(2):329--344.
+
+\bibitem[Kaplan et~al.(2018)]{kaplanmollviolante2018}
+Kaplan, G., Moll, B., and Violante, G.~L. (2018).
+\newblock Monetary policy according to {HANK}.
+\newblock \textit{American Economic Review}, 108(3):697--743.
+
+\bibitem[Rotemberg(1982)]{rotemberg1982}
+Rotemberg, J.~J. (1982).
+\newblock Sticky prices in the {United States}.
+\newblock \textit{Journal of Political Economy}, 90(6):1187--1211.
+
+\bibitem[Taylor(1993)]{taylor1993}
+Taylor, J.~B. (1993).
+\newblock Discretion versus policy rules in practice.
+\newblock \textit{Carnegie-Rochester Conference Series on Public Policy}, 39:195--214.
+
+\bibitem[Young(2010)]{young2010}
+Young, E.~R. (2010).
+\newblock Solving the incomplete markets model with aggregate uncertainty using the {Krusell-Smith} algorithm and non-stochastic simulations.
+\newblock \textit{Journal of Economic Dynamics and Control}, 34(1):36--41.
 
 \end{thebibliography}
 
