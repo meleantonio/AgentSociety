@@ -12,7 +12,9 @@ from emergent_constitution.dashboard.charts import (
 from emergent_constitution.models.history import HistoryEntryV2, SimulationOutputV2
 
 
-def _render_evolution_charts(history: list[HistoryEntryV2], periods: list[int]) -> None:
+def _render_evolution_charts(
+    history: list[HistoryEntryV2], periods: list[int], key_suffix: str = ""
+) -> None:
     """Render the 4 constitution evolution charts (widget-free)."""
     st.subheader("Constitution Evolution")
 
@@ -52,7 +54,7 @@ def _render_evolution_charts(history: list[HistoryEntryV2], periods: list[int]) 
                     "Constitutional Timeline",
                 ),
                 width="stretch",
-                key="const_timeline",
+                key=f"const_timeline{key_suffix}",
             )
         else:
             st.info("No constitutional changes during the simulation.")
@@ -76,7 +78,7 @@ def _render_evolution_charts(history: list[HistoryEntryV2], periods: list[int]) 
                     "Rate",
                 ),
                 width="stretch",
-                key="const_tax_rate",
+                key=f"const_tax_rate{key_suffix}",
             )
         else:
             st.info("No tax rules found in constitution snapshots.")
@@ -98,7 +100,7 @@ def _render_evolution_charts(history: list[HistoryEntryV2], periods: list[int]) 
                 "Count",
             ),
             width="stretch",
-            key="const_governance",
+            key=f"const_governance{key_suffix}",
         )
 
     with row2_r:
@@ -112,7 +114,7 @@ def _render_evolution_charts(history: list[HistoryEntryV2], periods: list[int]) 
                 "Rules",
             ),
             width="stretch",
-            key="const_rule_count",
+            key=f"const_rule_count{key_suffix}",
         )
 
 
@@ -133,7 +135,7 @@ def render_streaming(output: SimulationOutputV2) -> None:
     m2.metric("Passed", total_passed)
     m3.metric("Active Rules", current_rules)
 
-    _render_evolution_charts(history, periods)
+    _render_evolution_charts(history, periods, key_suffix=f"_s{len(history)}")
 
 
 def _build_proposals_table(history: list[HistoryEntryV2]) -> list[dict]:

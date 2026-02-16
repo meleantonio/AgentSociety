@@ -47,9 +47,10 @@ def run_simulation(
         progress_bar.progress(frac, text=f"Period {current}/{total}")
 
     def _on_observe(partial_output: SimulationOutputV2) -> None:
+        ks = f"_s{len(partial_output.history)}"
         if economy_placeholder is not None:
             with economy_placeholder.container():
-                economy_tab.render(partial_output)
+                economy_tab.render(partial_output, key_suffix=ks)
         if constitution_placeholder is not None:
             with constitution_placeholder.container():
                 constitution_tab.render_streaming(partial_output)

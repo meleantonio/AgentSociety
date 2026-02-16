@@ -12,11 +12,13 @@ from emergent_constitution.dashboard.charts import (
 from emergent_constitution.models.history import SimulationOutputV2
 
 
-def render(output: SimulationOutputV2) -> None:
+def render(output: SimulationOutputV2, *, key_suffix: str = "") -> None:
     """Render economy charts from simulation output.
 
     Args:
         output: Completed simulation output.
+        key_suffix: Suffix appended to plotly_chart keys for uniqueness
+            across repeated calls within a single Streamlit script run.
     """
     history = output.history
     periods = [e.period for e in history]
@@ -35,6 +37,7 @@ def render(output: SimulationOutputV2) -> None:
         st.plotly_chart(
             make_time_series(gdp_data, periods, "GDP Components", "Value"),
             width="stretch",
+            key=f"econ_gdp{key_suffix}",
         )
 
     with row1_r:
@@ -48,6 +51,7 @@ def render(output: SimulationOutputV2) -> None:
                 right_label="Interest Rate",
             ),
             width="stretch",
+            key=f"econ_prices{key_suffix}",
         )
 
     row2_l, row2_r = st.columns(2)
@@ -61,6 +65,7 @@ def render(output: SimulationOutputV2) -> None:
                 "Gini",
             ),
             width="stretch",
+            key=f"econ_gini{key_suffix}",
         )
 
     with row2_r:
@@ -68,6 +73,7 @@ def render(output: SimulationOutputV2) -> None:
         st.plotly_chart(
             make_fan_chart(periods, quantiles, "Wealth Distribution (p10-p90)"),
             width="stretch",
+            key=f"econ_wealth_dist{key_suffix}",
         )
 
     # --- Section B: Additional Metrics ---
@@ -83,6 +89,7 @@ def render(output: SimulationOutputV2) -> None:
         st.plotly_chart(
             make_time_series(welfare_data, periods, "Welfare", "Utility"),
             width="stretch",
+            key=f"econ_welfare{key_suffix}",
         )
 
     with row3_r:
@@ -94,6 +101,7 @@ def render(output: SimulationOutputV2) -> None:
                 "Rate",
             ),
             width="stretch",
+            key=f"econ_unemployment{key_suffix}",
         )
 
     row4_l, row4_r = st.columns(2)
@@ -109,6 +117,7 @@ def render(output: SimulationOutputV2) -> None:
                 right_label="Mean Size",
             ),
             width="stretch",
+            key=f"econ_firms{key_suffix}",
         )
 
     with row4_r:
@@ -120,4 +129,5 @@ def render(output: SimulationOutputV2) -> None:
                 "Score",
             ),
             width="stretch",
+            key=f"econ_pareto{key_suffix}",
         )
