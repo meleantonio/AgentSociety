@@ -6,7 +6,6 @@ import streamlit as st
 from pydantic import ValidationError
 
 from emergent_constitution.config import SimulationConfigV2
-from emergent_constitution.dashboard.runner import run_simulation
 
 
 def render(key_prefix: str = "params") -> None:
@@ -201,6 +200,5 @@ def render(key_prefix: str = "params") -> None:
             return
 
         st.session_state["sim_config"] = config
-        output = run_simulation(config)
-        st.session_state["sim_output"] = output
+        st.session_state["run_requested"] = True
         st.rerun()

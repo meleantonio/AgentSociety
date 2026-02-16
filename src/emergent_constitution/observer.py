@@ -302,6 +302,9 @@ class ObserverV2:
             constitution_snapshot=constitution.model_copy(deep=True),
         )
 
+        if self.config.record_agent_snapshots:
+            entry.household_snapshots = [h.model_copy(deep=True) for h in households]
+
         self.history.append(entry)
         self._prev_constitution = constitution.model_copy(deep=True)
 

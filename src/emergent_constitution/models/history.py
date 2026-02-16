@@ -143,6 +143,13 @@ class HistoryEntryV2(BaseModel):
     votes: list[VoteOutcomeV2] = Field(default_factory=list)
     rule_changes: list[str] = Field(default_factory=list)
     constitution_snapshot: ConstitutionV2
+    household_snapshots: list[HouseholdState] | None = Field(
+        default=None,
+        description=(
+            "Full HouseholdState snapshots at this observation period. "
+            "Only populated when config.record_agent_snapshots is True."
+        ),
+    )
 
 
 class WelfareSummary(BaseModel):
