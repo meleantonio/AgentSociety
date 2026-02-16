@@ -118,10 +118,20 @@ rye sync
 The easiest way to run simulations is through the interactive Streamlit dashboard. It lets you configure all parameters (agents, periods, shocks, production, LLM settings, HANK extensions, etc.), launch a simulation, and watch results stream in real time across three tabs: Economy, Constitution, and Agent Explorer.
 
 ```bash
+# Set your API key first (required for LLM mode)
+export ANTHROPIC_API_KEY="your-key-here"
+
 streamlit run src/emergent_constitution/dashboard/app.py
 ```
 
 Open `http://localhost:8501`, adjust parameters in the **Parameters** tab, and click **Run Simulation**. Charts update live as the simulation progresses.
+
+To use Anthropic models in the dashboard, expand the **LLM Settings** section in the Parameters tab and set:
+- **use_llm**: checked
+- **llm_provider**: `anthropic`
+- **llm_model**: any Anthropic model ID (e.g. `claude-sonnet-4-5-20250929`, `claude-haiku-4-5-20251001`)
+
+Leave **benchmark_mode** checked (under Execution Mode) if you want a $0 run with the numerical solver only — no API key needed.
 
 ### CLI Usage
 
@@ -137,21 +147,38 @@ emergent-constitution-v2 --benchmark -n 20 -t 20 -q
 
 #### LLM mode (Claude-powered agents)
 
-```bash
-# Default: 50 agents, 100 periods, Claude Sonnet 4.5
-export ANTHROPIC_API_KEY="your-key-here"
-emergent-constitution-v2 -n 50 -t 100
+Set your Anthropic API key (the SDK reads it automatically from the environment):
 
-# Use Haiku for cheaper runs (~75% cost reduction)
-emergent-constitution-v2 --llm-model claude-haiku-4-5-20251001
+```bash
+export ANTHROPIC_API_KEY="your-key-here"
+```
+
+Then pass `--llm-provider anthropic` and choose a model with `--llm-model`:
+
+```bash
+# Claude Sonnet 4.5 (default for quality)
+emergent-constitution-v2 --llm-provider anthropic -n 50 -t 100
+
+# Claude Haiku 4.5 (~75% cheaper, good for iteration)
+emergent-constitution-v2 --llm-provider anthropic --llm-model claude-haiku-4-5-20251001
 
 # Custom economic parameters
-emergent-constitution-v2 \
+emergent-constitution-v2 --llm-provider anthropic \
     -n 100 -t 200 \
     --alpha 0.33 --delta 0.1 \
     --rho-z 0.9 --sigma-z 0.2 \
     --rho-A 0.95 --sigma-A 0.01
 ```
+
+Available Anthropic models:
+
+| Model | ID | Best for |
+|-------|-----|----------|
+| Claude Sonnet 4.5 | `claude-sonnet-4-5-20250929` | Default — best quality/cost balance |
+| Claude Haiku 4.5 | `claude-haiku-4-5-20251001` | Fast iteration, ~75% cheaper |
+| Claude Opus 4.6 | `claude-opus-4-6` | Highest capability, most expensive |
+
+You can also use a local model server (LM Studio, Ollama, vLLM) with `--llm-provider local --llm-base-url http://localhost:1234/v1`.
 
 #### Output options
 
