@@ -137,9 +137,7 @@ def render(key_prefix: str = "params") -> None:
             rd_mean = r2.number_input("rd_tfp_improvement_mean", 0.001, 1.0, 0.05, 0.001)
             rd_std = r1.number_input("rd_tfp_improvement_std", 0.0, 1.0, 0.02, 0.001)
 
-        submitted = st.form_submit_button(
-            "Run Simulation", type="primary", use_container_width=True
-        )
+        submitted = st.form_submit_button("Run Simulation", type="primary", width="stretch")
 
     if submitted:
         try:
