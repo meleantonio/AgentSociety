@@ -48,6 +48,9 @@ def main() -> None:
         config = st.session_state["sim_config"]
         output = run_simulation(config, economy_ph, constitution_ph, agent_ph)
         st.session_state["sim_output"] = output
+        # Rerun so the final render below happens on a clean script execution,
+        # avoiding duplicate widget keys from the streaming callback.
+        st.rerun()
 
     # Render final state (or show placeholder message)
     output = st.session_state.get("sim_output")
