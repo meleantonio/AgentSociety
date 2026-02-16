@@ -12,6 +12,126 @@ from emergent_constitution.dashboard.charts import (
 from emergent_constitution.models.history import HistoryEntryV2, SimulationOutputV2
 
 
+def _render_evolution_charts(history: list[HistoryEntryV2], periods: list[int]) -> None:
+    """Render the 4 constitution evolution charts (widget-free)."""
+    st.subheader("Constitution Evolution")
+
+    row1_l, row1_r = st.columns(2)
+
+    with row1_l:
+        # Constitutional timeline from rule_changes
+        event_periods: list[int] = []
+        event_labels: list[str] = []
+        event_colors: list[str] = []
+        event_hovers: list[str] = []
+        color_map = {"add": "#00CC96", "modify": "#FFA15A", "remove": "#EF553B"}
+
+        for entry in history:
+            for change_text in entry.rule_changes:
+                event_periods.append(entry.period)
+                lower = change_text.lower()
+                if "add" in lower:
+                    action = "add"
+                elif "modif" in lower:
+                    action = "modify"
+                elif "remov" in lower:
+                    action = "remove"
+                else:
+                    action = "modify"
+                event_labels.append(action[0].upper())
+                event_colors.append(color_map.get(action, "#636EFA"))
+                event_hovers.append(change_text)
+
+        if event_periods:
+            st.plotly_chart(
+                make_scatter_timeline(
+                    event_periods,
+                    event_labels,
+                    event_colors,
+                    event_hovers,
+                    "Constitutional Timeline",
+                ),
+                width="stretch",
+            )
+        else:
+            st.info("No constitutional changes during the simulation.")
+
+    with row1_r:
+        # Tax rate evolution from constitution snapshots
+        tax_rates: list[float] = []
+        for entry in history:
+            rate = 0.0
+            for rule in entry.constitution_snapshot.rules.values():
+                if rule.rule_type == "tax_schedule" and rule.parameters:
+                    rate = rule.parameters.get("rate", rate)
+            tax_rates.append(rate)
+
+        if any(r > 0 for r in tax_rates):
+            st.plotly_chart(
+                make_time_series(
+                    {"Tax Rate": tax_rates},
+                    periods,
+                    "Tax Rate Evolution",
+                    "Rate",
+                ),
+                width="stretch",
+            )
+        else:
+            st.info("No tax rules found in constitution snapshots.")
+
+    row2_l, row2_r = st.columns(2)
+
+    with row2_l:
+        # Governance activity: proposals submitted vs passed per period
+        submitted_counts: list[int] = []
+        passed_counts: list[int] = []
+        for entry in history:
+            submitted_counts.append(len(entry.proposals))
+            passed_counts.append(sum(1 for v in entry.votes if v.passed))
+        st.plotly_chart(
+            make_bar_chart(
+                periods,
+                {"Submitted": submitted_counts, "Passed": passed_counts},
+                "Governance Activity",
+                "Count",
+            ),
+            width="stretch",
+        )
+
+    with row2_r:
+        # Rule count over time
+        rule_counts = [len(entry.constitution_snapshot.rules) for entry in history]
+        st.plotly_chart(
+            make_time_series(
+                {"Rule Count": [float(c) for c in rule_counts]},
+                periods,
+                "Rule Count Over Time",
+                "Rules",
+            ),
+            width="stretch",
+        )
+
+
+def render_streaming(output: SimulationOutputV2) -> None:
+    """Widget-free render for streaming updates during simulation."""
+    history = output.history
+    if not history:
+        st.info("Waiting for first observation...")
+        return
+    periods = [e.period for e in history]
+
+    # Summary metrics
+    total_proposals = sum(len(e.proposals) for e in history)
+    total_passed = sum(sum(1 for v in e.votes if v.passed) for e in history)
+    current_rules = len(history[-1].constitution_snapshot.rules)
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Total Proposals", total_proposals)
+    m2.metric("Passed", total_passed)
+    m3.metric("Active Rules", current_rules)
+
+    _render_evolution_charts(history, periods)
+
+
 def _build_proposals_table(history: list[HistoryEntryV2]) -> list[dict]:
     """Extract all proposals with their vote outcomes into flat rows."""
     rows: list[dict] = []
@@ -116,103 +236,7 @@ def render(output: SimulationOutputV2) -> None:
         st.info("No votes were recorded during the simulation.")
 
     # --- Section C: Constitution Evolution Charts ---
-    st.subheader("Constitution Evolution")
-
-    row1_l, row1_r = st.columns(2)
-
-    with row1_l:
-        # Constitutional timeline from rule_changes
-        event_periods: list[int] = []
-        event_labels: list[str] = []
-        event_colors: list[str] = []
-        event_hovers: list[str] = []
-        color_map = {"add": "#00CC96", "modify": "#FFA15A", "remove": "#EF553B"}
-
-        for entry in history:
-            for change_text in entry.rule_changes:
-                event_periods.append(entry.period)
-                # Try to infer action from text
-                lower = change_text.lower()
-                if "add" in lower:
-                    action = "add"
-                elif "modif" in lower:
-                    action = "modify"
-                elif "remov" in lower:
-                    action = "remove"
-                else:
-                    action = "modify"
-                event_labels.append(action[0].upper())
-                event_colors.append(color_map.get(action, "#636EFA"))
-                event_hovers.append(change_text)
-
-        if event_periods:
-            st.plotly_chart(
-                make_scatter_timeline(
-                    event_periods,
-                    event_labels,
-                    event_colors,
-                    event_hovers,
-                    "Constitutional Timeline",
-                ),
-                width="stretch",
-            )
-        else:
-            st.info("No constitutional changes during the simulation.")
-
-    with row1_r:
-        # Tax rate evolution from constitution snapshots
-        tax_rates: list[float] = []
-        for entry in history:
-            rate = 0.0
-            for rule in entry.constitution_snapshot.rules.values():
-                if rule.rule_type == "tax_schedule" and rule.parameters:
-                    rate = rule.parameters.get("rate", rate)
-            tax_rates.append(rate)
-
-        if any(r > 0 for r in tax_rates):
-            st.plotly_chart(
-                make_time_series(
-                    {"Tax Rate": tax_rates},
-                    periods,
-                    "Tax Rate Evolution",
-                    "Rate",
-                ),
-                width="stretch",
-            )
-        else:
-            st.info("No tax rules found in constitution snapshots.")
-
-    row2_l, row2_r = st.columns(2)
-
-    with row2_l:
-        # Governance activity: proposals submitted vs passed per period
-        submitted_counts: list[int] = []
-        passed_counts: list[int] = []
-        for entry in history:
-            submitted_counts.append(len(entry.proposals))
-            passed_counts.append(sum(1 for v in entry.votes if v.passed))
-        st.plotly_chart(
-            make_bar_chart(
-                periods,
-                {"Submitted": submitted_counts, "Passed": passed_counts},
-                "Governance Activity",
-                "Count",
-            ),
-            width="stretch",
-        )
-
-    with row2_r:
-        # Rule count over time
-        rule_counts = [len(entry.constitution_snapshot.rules) for entry in history]
-        st.plotly_chart(
-            make_time_series(
-                {"Rule Count": [float(c) for c in rule_counts]},
-                periods,
-                "Rule Count Over Time",
-                "Rules",
-            ),
-            width="stretch",
-        )
+    _render_evolution_charts(history, periods)
 
     # --- Section D: Constitution State Viewer ---
     st.subheader("Constitution State Viewer")

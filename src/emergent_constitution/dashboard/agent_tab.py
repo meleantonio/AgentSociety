@@ -10,6 +10,19 @@ from emergent_constitution.dashboard.charts import make_time_series
 from emergent_constitution.models.history import SimulationOutputV2
 from emergent_constitution.models.household import HouseholdState
 
+_CHART_CONFIG = [
+    ("wealth", "Wealth", "Wealth"),
+    ("consumption", "Consumption", "Consumption"),
+    ("income", "Income", "Income"),
+    ("labor_supply", "Labor Supply", "Labor Supply"),
+    ("realized_utility", "Realized Utility", "Utility"),
+    ("productivity", "Productivity", "Productivity"),
+    ("taxes_paid", "Taxes Paid", "Taxes"),
+    ("transfers_received", "Transfers Received", "Transfers"),
+    ("savings", "Savings", "Savings"),
+    ("leisure", "Leisure", "Leisure"),
+]
+
 
 def _extract_agent_series(
     output: SimulationOutputV2,
@@ -72,6 +85,42 @@ def _extract_agent_series(
     return series
 
 
+def render_streaming(output: SimulationOutputV2) -> None:
+    """Widget-free render for streaming updates during simulation."""
+    has_snapshots = any(e.household_snapshots is not None for e in output.history)
+    if not has_snapshots:
+        st.info("Agent snapshots will appear as the simulation progresses...")
+        return
+
+    hh = output.final_households
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Agents", len(hh))
+    m2.metric("Mean Wealth", f"{statistics.mean(h.wealth for h in hh):.2f}")
+    m3.metric("Mean Consumption", f"{statistics.mean(h.consumption for h in hh):.4f}")
+
+    # Show first 3 agents + population average (no selection widget)
+    agent_ids = sorted(h.id for h in hh)[:3]
+    periods = [e.period for e in output.history]
+    all_series = _extract_agent_series(output, agent_ids, include_avg=True)
+
+    # Show first 3 chart pairs (6 charts)
+    for i in range(0, min(6, len(_CHART_CONFIG)), 2):
+        col_l, col_r = st.columns(2)
+        metric, title, ylabel = _CHART_CONFIG[i]
+        with col_l:
+            st.plotly_chart(
+                make_time_series(all_series[metric], periods, title, ylabel),
+                width="stretch",
+            )
+        if i + 1 < len(_CHART_CONFIG):
+            metric2, title2, ylabel2 = _CHART_CONFIG[i + 1]
+            with col_r:
+                st.plotly_chart(
+                    make_time_series(all_series[metric2], periods, title2, ylabel2),
+                    width="stretch",
+                )
+
+
 def render(output: SimulationOutputV2) -> None:
     """Render agent explorer tab.
 
@@ -105,29 +154,16 @@ def render(output: SimulationOutputV2) -> None:
     all_series = _extract_agent_series(output, selected_ids, include_avg)
 
     # --- Per-agent time series charts (2-column layout) ---
-    chart_config = [
-        ("wealth", "Wealth", "Wealth"),
-        ("consumption", "Consumption", "Consumption"),
-        ("income", "Income", "Income"),
-        ("labor_supply", "Labor Supply", "Labor Supply"),
-        ("realized_utility", "Realized Utility", "Utility"),
-        ("productivity", "Productivity", "Productivity"),
-        ("taxes_paid", "Taxes Paid", "Taxes"),
-        ("transfers_received", "Transfers Received", "Transfers"),
-        ("savings", "Savings", "Savings"),
-        ("leisure", "Leisure", "Leisure"),
-    ]
-
-    for i in range(0, len(chart_config), 2):
+    for i in range(0, len(_CHART_CONFIG), 2):
         col_l, col_r = st.columns(2)
-        metric, title, ylabel = chart_config[i]
+        metric, title, ylabel = _CHART_CONFIG[i]
         with col_l:
             st.plotly_chart(
                 make_time_series(all_series[metric], periods, title, ylabel),
                 width="stretch",
             )
-        if i + 1 < len(chart_config):
-            metric2, title2, ylabel2 = chart_config[i + 1]
+        if i + 1 < len(_CHART_CONFIG):
+            metric2, title2, ylabel2 = _CHART_CONFIG[i + 1]
             with col_r:
                 st.plotly_chart(
                     make_time_series(all_series[metric2], periods, title2, ylabel2),
