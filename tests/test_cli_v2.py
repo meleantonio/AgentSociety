@@ -41,7 +41,7 @@ class TestBuildParserV2:
         assert args.observer_interval == 5
         assert args.benchmark is False
         assert args.llm_provider == "local"
-        assert args.llm_model == "lmstudio-community/gpt-oss-20b-GGUF"
+        assert args.llm_model == "deepseek/deepseek-r1-0528-qwen3-8b"
         assert args.llm_base_url == "http://localhost:1234/v1"
         assert args.output is None
         assert args.json_output is False

@@ -90,7 +90,7 @@ def render(key_prefix: str = "params") -> None:
             use_llm = st.checkbox("use_llm", value=False)
             llm1, llm2 = st.columns(2)
             llm_provider = llm1.text_input("llm_provider", value="local")
-            llm_model = llm2.text_input("llm_model", value="lmstudio-community/gpt-oss-20b-GGUF")
+            llm_model = llm2.text_input("llm_model", value="deepseek/deepseek-r1-0528-qwen3-8b")
             llm_base_url = st.text_input("llm_base_url", value="http://localhost:1234/v1")
             llm_temp = st.number_input("llm_temperature", 0.0, 2.0, 0.0, 0.1)
 

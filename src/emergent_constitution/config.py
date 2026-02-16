@@ -156,7 +156,7 @@ class SimulationConfigV2(BaseModel):
     # --- LLM ---
     use_llm: bool = Field(default=True, description="Default: LLM-driven (REQ-024)")
     llm_provider: str = Field(default="local", description="Provider name")
-    llm_model: str = Field(default="lmstudio-community/gpt-oss-20b-GGUF", description="Model ID")
+    llm_model: str = Field(default="deepseek/deepseek-r1-0528-qwen3-8b", description="Model ID")
     llm_base_url: str = Field(
         default="http://localhost:1234/v1",
         description="Base URL for OpenAI-compatible local model server.",
