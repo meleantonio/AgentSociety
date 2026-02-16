@@ -1325,7 +1325,7 @@ Production & \texttt{min\_firm\_capital} & 10.0 & $> 0$ \\
 \midrule
 Entrepreneurial & \texttt{firm\_entry\_cost} & 5.0 & $> 0$ \\
 Entrepreneurial & \texttt{firm\_discount\_factor} & 0.95 & $(0, 1)$ \\
-Entrepreneurial & \texttt{entrepreneur\_leisure} & 0.2 & $(0, 1)$ \\
+Entrepreneurial & \texttt{use\_bellman\_occ\_choice} & False & boolean \\
 \midrule
 Household & \texttt{a\_min} & 0.0 & $\geq 0$ \\
 Household & \texttt{initial\_wealth\_mean} & 100.0 & $> 0$ \\
@@ -1336,7 +1336,7 @@ Household & \texttt{utility\_beta} & 0.35 & $(0, 1)$ \\
 Household & \texttt{utility\_gamma} & 0.25 & $(0, 1)$ \\
 Household & \texttt{utility\_beta\_discount} & 0.95 & $(0, 1)$ \\
 \midrule
-Market clearing & \texttt{method} & analytical & Cobb-Douglas FOCs \\
+Market clearing & \texttt{market\_clearing\_method} & analytical & analytical/walrasian \\
 Market clearing & \texttt{wage\_floor} & $10^{-6}$ & $> 0$ \\
 Market clearing & \texttt{interest\_rate\_floor} & $-0.99$ & $> -1$ \\
 \midrule
@@ -1376,6 +1376,8 @@ Nominal & \texttt{taylor\_phi\_pi} & 1.5 & $> 1$ \\
 Nominal & \texttt{taylor\_phi\_y} & 0.125 & $\geq 0$ \\
 Nominal & \texttt{inflation\_target} & 0.02 & --- \\
 Nominal & \texttt{elasticity\_sub} & 6.0 & $> 1$ \\
+Nominal & \texttt{wage\_rigidity} & False & boolean \\
+Nominal & \texttt{rotemberg\_wage\_cost} & 50.0 & $\geq 0$ \\
 \midrule
 Political & \texttt{political\_lambda} & 0.05 & $[0, 1]$ \\
 Political & \texttt{pure\_bellman\_politics} & False & boolean \\
