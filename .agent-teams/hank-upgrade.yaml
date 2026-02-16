@@ -1,0 +1,44 @@
+name: hank-upgrade
+description: "HANK Upgrade: Transform Bewley economy into publication-grade DSGE-HA with nominal rigidities, two-asset portfolio choice, EGM solver, and KFE distribution tracking"
+task_source: sdd
+
+github:
+  repo: meleantonio/AgentSociety
+  milestone: "v3.0-HANK"
+  labels_prefix: "agent-team"
+
+roles:
+  - name: builder-foundations
+    model: opus
+    mode: default
+    focus: "Phase 1: EGM solver, Walrasian market clearing, entrepreneur budget fix, occupational choice Bellman"
+
+  - name: builder-scale
+    model: sonnet
+    mode: default
+    focus: "Phase 2: KFE distribution tracking, Rouwenhorst grid expansion, calibration module"
+
+  - name: builder-hank
+    model: opus
+    mode: default
+    focus: "Phase 3: Two-asset household, government debt/bonds, nominal rigidities, extended market clearing"
+
+  - name: builder-politics
+    model: sonnet
+    mode: default
+    focus: "Phase 4: Political utility function, Bellman-derived preferences, integration tests"
+
+  - name: verifier
+    model: sonnet
+    mode: default
+    focus: "Verify implementations against spec/requirements.md and spec/design.md, run tests, check properties"
+
+  - name: reviewer
+    model: sonnet
+    mode: default
+    focus: "Review PRs for code quality, numerical correctness, backward compatibility, adherence to steering/coding-standards.md"
+
+  - name: docs-updater
+    model: sonnet
+    mode: default
+    focus: "Update docs/model_paper.tex, docs/*.md, README.md after all phases complete"

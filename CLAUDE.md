@@ -4,87 +4,86 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**The Emergent Constitution** is an agent-based political economy simulation. 50+ citizen-agents with heterogeneous preferences, endowments, and value vectors self-organize governance from scratch. The simulation tracks the emergence of property rights, voting rules, taxation, coalition dynamics, and measures outcomes (Pareto efficiency, Gini coefficient). It produces a readable "constitutional" document and history log.
-
-This project is designed to showcase Agent Teams at scale, leveraging Claude's 1M context window to maintain full state and history.
+**The Emergent Constitution** is a DSGE-HA (Dynamic Stochastic General Equilibrium with Heterogeneous Agents) political economy simulation. Citizen-agents with heterogeneous preferences, endowments, and value vectors self-organize governance from scratch. The simulation tracks the emergence of property rights, voting rules, taxation, coalition dynamics, and measures outcomes (Pareto efficiency, Gini coefficient). Economic decisions are solved via VFI on the Bellman equation; political decisions are delegated to LLMs.
 
 ## Project Status
 
-**Implementation is complete.** All 6 requirements (REQ-001 through REQ-006) and both properties (PROP-001, PROP-002) are implemented. 977 tests passing.
+**v2 engine complete.** 977 tests passing. A **HANK upgrade** (v3) is planned to address economic inconsistencies and add nominal rigidities, two-asset portfolio choice, and proper distribution tracking.
 
-### Implemented Phases
+### Completed Phases (v1 + v2)
 
-- **Phase 1** (PR #1) — Core simulation loop and state: Pydantic data models, agent initialization, Lead tick loop, economics engine (production, taxation, redistribution). REQ-001, REQ-002, PROP-002.
-- **Phase 2** (PR #2) — Proposals and voting: Proposal collection/validation, voting mechanisms (majority/supermajority/unanimity), citizen decision logic (rule-based). REQ-003, REQ-004, PROP-001.
-- **Phase 3** (PR #3) — Observer and output: Observer statistics (Gini, total output, Pareto), history logging. REQ-005, REQ-006.
-- **Phase 4** (PR #4) — Reporter and CLI: Markdown report generator, CLI entry point (`python -m emergent_constitution`).
-- **Phase 5** (PRs #52–#57) — DSGE-HA v2 engine: Heterogeneous-agent DSGE with entrepreneurial choice, VFI-based household optimization, market clearing, LLM-driven governance, and constitution engine.
+- **v1 Phases 1-4** (PRs #1-#4) — Core simulation, proposals/voting, observer, reporter/CLI
+- **v2 Phase 5** (PRs #52-#57) — DSGE-HA engine: Cobb-Douglas production, Rouwenhorst shocks, VFI household solver, entrepreneurial choice, analytical market clearing, LLM governance, constitution engine
+- **v2.1** (`feat/mechanism-effects-framework`) — Generic mechanism effects for novel LLM-proposed institutions (revenue, distribution, productivity, constraints, wealth flows, public goods, utility effects)
 
-### Recent Major Changes (PR #57)
+### HANK Upgrade (v3) — In Progress
 
-- **Analytical market clearing**: Closed-form Cobb-Douglas FOC prices (`w = (1-α)Y/L`, `r = αY/K - δ`) replace tatonnement iteration — zero market-clearing error every period.
-- **Utility-based occupational choice**: Entrepreneurial entry/exit uses lifetime-utility comparison (worker vs entrepreneur value) with closed-form infinite-horizon firm value via stationary distribution of the ability Markov chain.
-- **Vectorized VFI**: NumPy-backed value function iteration with policy cache keyed on market parameters.
-- **Benchmark-mode governance**: `citizen_v2` module provides rule-based proposal/voting for v2 benchmark simulations.
-- **Default constitution**: 10% flat tax (was 0%), progressive transfers supported.
+The v3 upgrade addresses critiques from a review against Kaplan-Moll-Violante (2018), Auclert (2019), Cagetti-De Nardi (2006). Four phases, 14 tasks, 84 subtasks:
+
+- **Phase 1: Fix Economic Foundations** — EGM solver (Carroll 2006) replacing 11-point grid search, Walrasian market clearing with firm-level FOC bisection, corrected entrepreneur budget constraint (profit only, no labor income), Bellman-based occupational choice
+- **Phase 2: Scale and Calibrate** — KFE distribution tracking (Young 2010), 7-point Rouwenhorst grids, moment-matching calibration (wealth Gini 0.80, entrepreneur share 10%)
+- **Phase 3: HANK Features** — Two-asset structure (liquid bonds + illiquid capital), government debt/bond market, nominal rigidities (Rotemberg pricing, NKPC, Taylor rule)
+- **Phase 4: Microfound Politics** — Political utility in the Bellman equation, Bellman-derived political preferences
+
+All new features gated behind config flags (defaults preserve v2 behavior). See `spec/tasks.md` for detailed subtask checklist.
 
 ### Spec Documents
 
-Original specification documents live under `AgentSocietyPlanning/`:
+**v3 HANK upgrade specs** (active, use these for new work):
 
-- `spec/intent.md` — Project goals and motivation
-- `spec/requirements.md` — EARS-formatted requirements
-- `spec/design.md` — Architecture, data models, component interfaces, error handling
-- `spec/tasks.md` — Implementation plan with traceability to requirements
-- `steering/coding-standards.md` — Coding patterns and constraints
+- `spec/intent.md` — HANK upgrade vision, motivation, success criteria
+- `spec/requirements.md` — 50 EARS requirements (REQ-1xx through REQ-4xx) + 12 properties
+- `spec/design.md` — Full technical design: EGM algorithm, Walrasian clearing, KFE, two-asset model, nominal block
+- `spec/tasks.md` — 84 subtasks across 4 phases with requirement traceability
+- `steering/coding-standards.md` — Numerical code, backward compat, testing standards
+
+**v2 original specs** (historical reference):
+
+- `AgentSocietyPlanning/spec/` — Original intent, requirements (REQ-001 to REQ-037), design, tasks
 
 ## Architecture
 
+### v2 Period Lifecycle (9 steps + mechanism effect hooks)
+
 ```
-Initial config (N agents, endowments, preferences, seed)
-       |
-       v
-+------------------+
-| Lead (Governor)  |  tick loop: update state, collect proposals, run votes, apply rules
-+------------------+
-       |
-       +---> Citizen agents (50+): propose, vote, trade (decisions per tick)
-       |
-       +---> Constitution (mutable ruleset): property_rule, tax_rate, voting_rule, redistribution_rule
-       |
-       v (every K ticks)
-+------------------+
-| Observer         |  compute Gini, total output, Pareto; append to history
-+------------------+
-       |
-       v
-   Output: constitution snapshot + history log
+Step 1:  Draw shocks (Rouwenhorst Markov transitions, aggregate TFP)
+Step 1b: Apply productivity mechanism effects (from novel constitutional rules)
+Step 2:  Clear markets (find equilibrium w, r)
+Step 3:  Collect decisions (VFI/EGM household solver + entrepreneurial solver)
+Step 4:  Validate constraints (clamp c, l, a' to feasible set)
+Step 4b: Apply mechanism constraints (min/max bounds from novel rules)
+Step 5:  Execute production (firm outputs, profits, R&D)
+Step 6:  Enforce constitution (taxes, transfers, public goods)
+Step 6b: Enforce mechanism effects (revenue, distribution, wealth flows)
+Step 7:  Process governance (proposals, voting — LLM or benchmark)
+Step 8:  Update states (budget constraint: a' = (1+r)a + income - c - T + Tr)
+Step 9:  Observe (Gini, Pareto, aggregates, welfare)
 ```
 
-**Lead (Simulation Governor):** Advances time in discrete ticks, enforces turn order, resolves voting conflicts, aggregates global state, triggers Observer.
+**v3 additions** (planned): Steps 2b (nominal block), 3b (portfolio choice), 7b (government budget), 8b (KFE forward)
 
-**Citizen Agents:** Each has endowments (wealth, productivity), preferences (utility function over consumption/leisure/public goods), and a value vector (equality vs liberty). Capabilities: propose rules, vote, trade, form coalitions. Behavior driven by micro-rules to maximize utility.
+### Key Components
 
-**Observer/Statistician:** Reads state every K ticks, computes Gini coefficient, total output, Pareto dominance checks, coalition sizes. Maintains history log.
+- **Lead (Governor):** Advances time in discrete periods, enforces the 9-step lifecycle, triggers Observer
+- **Household Solver:** VFI on Bellman equation (v2) or EGM (v3) for optimal (c, l, savings)
+- **Entrepreneurial Solver:** Utility-based occupational choice, firm value, optimal capital
+- **Market Clearing:** Analytical Cobb-Douglas FOC (v2) or Walrasian bisection (v3)
+- **Constitution Engine:** Rule enforcement with sandboxed expressions + mechanism effects framework
+- **LLM Engine:** Structured context → LLM → political decisions (proposals, votes)
+- **Observer:** Gini, Pareto, aggregates, welfare summary
 
-**Execution model:** Single process with clear tick loop. Citizen logic is code-based (deterministic), with LLM agents used selectively for proposal generation and vote reasoning to manage API costs.
+### Data Models (Pydantic, in `src/emergent_constitution/models/`)
 
-## Data Models
+**v1:** AgentState, Constitution, Proposal, VoteOutcome, TickState, HistoryEntry, SimulationOutput
 
-Seven core Pydantic models in `src/emergent_constitution/models/`:
+**v2:** HouseholdState, FirmState, MarketState, ShockState, ConstitutionV2, ConstitutionalRule, ConstitutionalProposal, EconomicDecision, EntrepreneurialDecision, PoliticalDecision, PeriodState, SimulationOutputV2
 
-- **AgentState** — id, wealth, productivity, utility_params, value_vector, coalition_id
-- **Constitution** — property_rule, tax_rate, voting_rule, redistribution_rule (mutable; schema-validated)
-- **Proposal** — rule_key, proposed_value, proposer_id
-- **VoteOutcome** — proposal, passed, votes_for
-- **TickState** — tick, agent_states, constitution, proposals_this_tick, votes
-- **HistoryEntry** — tick, gini, total_output, rule_changes
-- **Output** — constitution, history, final_agent_states
+**v2.1:** MechanismEffect, EffectTarget, EffectScope, RuleImpact (open rule types, mechanism effects framework)
 
 ## Key Source Files
 
 ### V1 (basic simulation)
-- `src/emergent_constitution/models/` — Pydantic data models (agent, constitution, history, proposal, tick)
+- `src/emergent_constitution/models/` — Pydantic data models (v1 and v2)
 - `src/emergent_constitution/config.py` — `SimulationConfig` and `SimulationConfigV2`
 - `src/emergent_constitution/initialization.py` — Agent/state creation
 - `src/emergent_constitution/economics.py` — Production, tax, redistribution
@@ -101,19 +100,32 @@ Seven core Pydantic models in `src/emergent_constitution/models/`:
 - `src/emergent_constitution/numerical_solver.py` — VFI household solver (NumPy-vectorized, policy cache)
 - `src/emergent_constitution/entrepreneurial_solver.py` — Firm value, utility-based entry/exit, optimal capital
 - `src/emergent_constitution/market_clearing.py` — Analytical Cobb-Douglas equilibrium prices
-- `src/emergent_constitution/constitution_engine.py` — Rule enforcement, taxation, transfers, public goods
+- `src/emergent_constitution/constitution_engine.py` — Rule enforcement, taxation, transfers, public goods, mechanism effects
+- `src/emergent_constitution/llm_engine.py` — LLM decision engine (political prompts, context building, institutional suggestions)
 - `src/emergent_constitution/citizen_v2.py` — Rule-based proposal/voting for benchmark mode
 - `src/emergent_constitution/llm_providers.py` — LLM provider abstraction (Anthropic, Mock)
 - `docs/model_paper.tex` — LaTeX academic paper documenting the DSGE-HA model
 
+### V3 (HANK upgrade — planned, see `spec/design.md`)
+- `src/emergent_constitution/egm_solver.py` — EGM household solver (Carroll 2006), replaces brute-force VFI
+- `src/emergent_constitution/distribution.py` — KFE distribution tracking (Young 2010 lottery)
+- `src/emergent_constitution/calibration.py` — Moment-matching calibration (SMM)
+- `src/emergent_constitution/government.py` — Government budget, debt, fiscal rule
+- `src/emergent_constitution/nominal.py` — Nominal rigidities, Taylor rule, NKPC
+- `src/emergent_constitution/political_utility.py` — Political utility function for Bellman equation
+
 ## Critical Design Constraints
 
-- **Determinism (PROP-001):** Single RNG seed for all randomness (proposal order, tie-breaks, stochastic behavior). Same seed + config = same output. Store seed in config and log it.
-- **State immutability per tick:** Pass copies or read-only views to citizens. Citizens return actions; they never mutate global state directly.
-- **Constitution schema validation:** Define valid keys and value types (e.g., tax_rate in [0,1]). Reject invalid proposals without crashing.
-- **Deterministic tie-breaks:** Status quo wins ties, or use seeded randomness. Never leave tie-break behavior undefined.
-- **Numerical stability:** Cap or abort on NaN/Inf values in wealth or utility calculations.
+- **Determinism (PROP-001):** Single RNG seed for all randomness. Same seed + config = same output.
+- **State immutability per tick:** Citizens return actions; they never mutate global state directly.
+- **Constitution schema validation:** Reject invalid proposals without crashing. Sandbox enforcement code at AST level.
+- **Deterministic tie-breaks:** Status quo wins ties, or use seeded randomness.
+- **Numerical stability:** Cap or abort on NaN/Inf values. All division guards against zero denominators.
 - **Sandboxed citizen logic:** No network or file access from citizen logic except via Lead-provided state.
+- **Backward compatibility (PROP-012):** All new v3 features gated behind config flags. Default config reproduces v2 behavior. All 977 existing tests must pass at each phase boundary.
+- **Euler equation accuracy (PROP-007, v3):** EGM solver must achieve Euler residual < 1e-6. Policy functions must be monotone in wealth.
+- **Market clearing tolerance (PROP-003):** Excess demand in all markets < 1e-8 after equilibrium computation.
+- **Distribution conservation (PROP-008, v3):** KFE distribution sums to 1 at every period (tolerance 1e-12).
 
 ## Running
 
@@ -148,7 +160,17 @@ pytest --cov=emergent_constitution --cov-report=term-missing
 
 - **Language:** Python (3.10+)
 - **State models:** Pydantic
-- **Numerics:** NumPy (vectorized VFI, market clearing)
+- **Numerics:** NumPy (vectorized VFI/EGM, market clearing, KFE), SciPy (v3: optimization, linear algebra)
 - **Formatter/linter:** Ruff (`ruff format .`, `ruff check .`)
-- **Testing:** pytest (977 tests)
+- **Testing:** pytest (977 tests, target 90%+ coverage for new code)
 - **Orchestration:** Single-process tick loop
+
+## Key Economic Concepts (Reference)
+
+When implementing v3 tasks, refer to these:
+
+- **EGM (Endogenous Grid Method):** Invert Euler equation to get consumption analytically at each savings grid point, then interpolate back to exogenous grid. Avoids root-finding. See `spec/design.md` §1.4.
+- **Walrasian clearing:** Bisect on wage to equate `sum_f L_f*(w)` with `L^s`. Interest rate from aggregate MPK. See `spec/design.md` §1.1.
+- **KFE (Kolmogorov Forward Equation):** Evolve distribution forward using policy functions + transition matrix. Young (2010) lottery for non-grid-aligned savings. See `spec/design.md` §2.1.
+- **Two-asset HANK:** Liquid (bonds) + illiquid (capital) with convex adjustment cost. Nested EGM: outer loop over deposit, inner EGM for liquid savings. See `spec/design.md` §3.1.
+- **Rotemberg pricing:** Quadratic price adjustment cost creates sticky prices. NKPC links inflation to marginal cost. Taylor rule sets nominal rate. Fisher equation links nominal to real. See `spec/design.md` §3.3.

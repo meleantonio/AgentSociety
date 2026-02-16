@@ -62,6 +62,7 @@ from emergent_constitution.models.proposal import (
 )
 from emergent_constitution.models.shocks import ShockState
 from emergent_constitution.models.tick import TickState
+from emergent_constitution.egm_solver import EGMSolver
 from emergent_constitution.numerical_solver import NumericalSolver
 from emergent_constitution.observer import ObserverV2, observe_tick
 from emergent_constitution.rng import SimulationRNG
@@ -520,6 +521,12 @@ class LeadV2:
         # Step 1: Draw shocks
         households, shocks = self._draw_shocks(t, households, shocks)
 
+        # Step 1b: Apply productivity effects from novel institutional rules
+        # before market clearing so prices reflect institutional effects
+        households = self.constitution_engine.apply_productivity_effects(
+            households, constitution, self.period_state.market
+        )
+
         # Step 2: Clear markets
         market = self._clear_markets(households, firms, shocks)
 
@@ -528,17 +535,34 @@ class LeadV2:
             households, firms, market, constitution
         )
 
-        # Step 4: Validate constraints
+        # Step 4: Validate constraints (including mechanism effect constraints)
+        mechanism_constraints = self.constitution_engine.compute_agent_constraints(
+            households, constitution, market
+        )
         econ_decisions = self._validate_constraints(
-            econ_decisions, households, market, constitution
+            econ_decisions, households, market, constitution, mechanism_constraints
         )
 
         # Step 4b: Set labor_supply and income on households from validated decisions
         # so that Step 6 (enforce_taxes) can compute taxes on actual income.
+        # Build firm profit lookup for entrepreneur income (when fix is active)
+        _firm_profit_by_owner: dict[str, float] = {}
+        if self.config.fix_entrepreneur_budget:
+            for f in firms:
+                _firm_profit_by_owner[f.owner_id] = f.profit
+
         for h in households:
             decision = econ_decisions.get(h.id, EconomicDecision(consumption=0.0, leisure=0.5))
-            h.labor_supply = 1.0 - decision.leisure
-            h.income = market.wage * h.productivity * h.labor_supply
+            if (
+                self.config.fix_entrepreneur_budget
+                and h.role == OccupationalRole.ENTREPRENEUR
+            ):
+                # Entrepreneurs do not supply labor; income = firm profit only
+                h.labor_supply = 0.0
+                h.income = _firm_profit_by_owner.get(h.id, 0.0)
+            else:
+                h.labor_supply = 1.0 - decision.leisure
+                h.income = market.wage * h.productivity * h.labor_supply
 
         # Step 5: Execute production
         firms = self._execute_production(firms, entre_decisions, households, market)
@@ -743,12 +767,11 @@ class LeadV2:
             entre_public_goods = self.constitution_engine.enforce_public_goods(
                 constitution, 0.0, len(households)
             )
-            # Pass VFI value function for Bellman occ choice (REQ-110)
-            vfi_vf, vfi_ag = self._solver.get_value_function()
+            # Pass VFI value function for Bellman-based occupational choice (REQ-110)
+            vfi_value_func, vfi_a_grid = self._solver.get_value_function()
             entre_decisions = self._entre_solver.solve_all(
-                households, firms, market,
-                public_goods=entre_public_goods,
-                vfi_value_func=vfi_vf, a_grid=vfi_ag,
+                households, firms, market, public_goods=entre_public_goods,
+                vfi_value_func=vfi_value_func, a_grid=vfi_a_grid,
             )
 
         log.debug(
@@ -769,30 +792,67 @@ class LeadV2:
         households: list[HouseholdState],
         market: MarketState,
         constitution: ConstitutionV2,
+        mechanism_constraints: dict[str, dict[str, float]] | None = None,
     ) -> dict[str, EconomicDecision]:
         """Project economic decisions onto the feasible set.
 
-        Ensures consumption and leisure are within budget constraints.
+        Ensures consumption and leisure are within budget constraints,
+        including any custom bounds from mechanism effects.
 
         Args:
             decisions: Raw economic decisions from step 3.
             households: Current household states.
             market: Current market equilibrium.
             constitution: Current constitution.
+            mechanism_constraints: Optional custom bounds from mechanism effects.
 
         Returns:
             Constrained economic decisions.
         """
         tax_rate = self._get_tax_rate(constitution)
 
+        # Build firm profit lookup for entrepreneur budget validation
+        _firm_profit_by_owner: dict[str, float] = {}
+        if self.config.fix_entrepreneur_budget:
+            active_firms = self.period_state.firms
+            for f in active_firms:
+                _firm_profit_by_owner[f.owner_id] = f.profit
+
         constrained: dict[str, EconomicDecision] = {}
         for h in households:
             decision = decisions.get(h.id, EconomicDecision(consumption=0.0, leisure=0.5))
-            income = market.wage * h.productivity * (1.0 - decision.leisure)
+            if (
+                self.config.fix_entrepreneur_budget
+                and h.role == OccupationalRole.ENTREPRENEUR
+            ):
+                # Entrepreneur income = firm profit only (no labor income)
+                income = _firm_profit_by_owner.get(h.id, 0.0)
+            else:
+                income = market.wage * h.productivity * (1.0 - decision.leisure)
             tax = income * tax_rate
             transfer = 0.0  # Conservative; actual transfers computed in step 6
-            budget = compute_budget(h, market.wage, market.interest_rate, tax, transfer)
-            constrained[h.id] = enforce_budget_constraint(decision, h, budget, self.config.a_min)
+            budget = compute_budget(
+                h, market.wage, market.interest_rate, tax, transfer,
+                firm_profit=_firm_profit_by_owner.get(h.id, 0.0)
+                if self.config.fix_entrepreneur_budget
+                else None,
+            )
+            clamped = enforce_budget_constraint(decision, h, budget, self.config.a_min)
+
+            # Apply mechanism effect constraints
+            if mechanism_constraints and h.id in mechanism_constraints:
+                bounds = mechanism_constraints[h.id]
+                cons = clamped.consumption
+                leis = clamped.leisure
+                cons = max(cons, bounds.get("consumption_min", cons))
+                cons = min(cons, bounds.get("consumption_max", cons))
+                leis = max(leis, bounds.get("leisure_min", leis))
+                leis = min(leis, bounds.get("leisure_max", leis))
+                cons = max(0.0, cons)
+                leis = max(0.0, min(1.0, leis))
+                clamped = EconomicDecision(consumption=cons, leisure=leis)
+
+            constrained[h.id] = clamped
 
         log.debug("step4.constraints_validated", num_agents=len(constrained))
         return constrained
@@ -944,11 +1004,18 @@ class LeadV2:
             firms, households, constitution
         )
 
+        # Apply mechanism effects from novel institution rules
+        households, pg_extra = self.constitution_engine.enforce_mechanism_effects(
+            households, constitution, market, self.config.a_min
+        )
+        public_goods += pg_extra
+
         log.debug(
             "step6.constitution_enforced",
             revenue=round(revenue, 2),
             public_goods=round(public_goods, 4),
             transfer_revenue=round(transfer_revenue, 2),
+            mechanism_pg_extra=round(pg_extra, 4),
         )
 
         return households, public_goods
@@ -1031,9 +1098,7 @@ class LeadV2:
             self.rng.shuffle(h_order)
 
             for h in h_order:
-                proposal = decide_proposal_v2(
-                    h, constitution, self.config.num_agents, self.rng
-                )
+                proposal = decide_proposal_v2(h, constitution, self.config.num_agents, self.rng)
                 if proposal is not None:
                     is_valid, reason = validate_proposal_v2(proposal, constitution)
                     if is_valid:
@@ -1140,15 +1205,26 @@ class LeadV2:
             leisure = decision.leisure
             labor_supply = 1.0 - leisure
 
-            # Income from labor
-            labor_income = market.wage * h.productivity * labor_supply
-
             # Add firm profit for entrepreneurs
             firm_profit = firm_profit_by_owner.get(h.id, 0.0)
-            total_income = labor_income + firm_profit
+
+            if (
+                self.config.fix_entrepreneur_budget
+                and h.id in owners_with_firms
+            ):
+                # Entrepreneurs are residual claimants: income = pi_f only.
+                # Their labor is embedded in firm production, not separately
+                # compensated at market wage. Labor supply = 0.
+                labor_supply = 0.0
+                total_income = firm_profit
+            else:
+                # Workers: income from labor (+ any leftover firm profit for
+                # backward compat when flag is off)
+                labor_income = market.wage * h.productivity * labor_supply
+                total_income = labor_income + firm_profit
 
             # Full DSGE-HA budget constraint:
-            # a' = (1+r)*a + w*z*(1-l) + firm_profit - c - taxes + transfers
+            # a' = (1+r)*a + income - c - taxes + transfers
             new_wealth = (
                 (1.0 + market.interest_rate) * h.wealth
                 + total_income
