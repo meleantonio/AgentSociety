@@ -97,7 +97,10 @@ class SimulationConfigV2(BaseModel):
     )
     use_bellman_occ_choice: bool = Field(
         default=False,
-        description="Use Bellman-based occupational choice (REQ-110..114). Default OFF for backward compat.",
+        description=(
+            "Use Bellman-based occupational choice (REQ-110..114). "
+            "Default OFF for backward compat."
+        ),
     )
 
     # --- Production ---
@@ -139,8 +142,9 @@ class SimulationConfigV2(BaseModel):
     market_clearing_method: Literal["analytical", "walrasian"] = Field(
         default="analytical",
         description=(
-            "Market clearing algorithm. 'analytical' uses representative-firm FOCs (backward compat). "
-            "'walrasian' uses bisection on excess labor demand with heterogeneous firms (REQ-101..106)."
+            "'analytical' uses representative-firm FOCs. "
+            "'walrasian' uses bisection with heterogeneous firms "
+            "(REQ-101..106)."
         ),
     )
     tatonnement_max_iter: int = Field(
