@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import math
 
+import pytest
+
 from emergent_constitution.config import SimulationConfigV2
+from emergent_constitution.economics import produce_output
 from emergent_constitution.market_clearing import (
     _analytical_equilibrium,
     clear_markets,
@@ -217,7 +220,7 @@ class TestClearMarkets:
         assert math.isfinite(result.capital_excess_demand)
 
     def test_convergence_single_firm(self) -> None:
-        """Single firm with matching supply should converge well."""
+        """Single-firm analytical path should report finite mismatch diagnostics."""
         # Create households whose total wealth matches firm capital
         # and total labor matches firm's optimal labor demand
         households = [
@@ -238,8 +241,9 @@ class TestClearMarkets:
             tatonnement_tolerance=1e-4,
         )
         result = clear_markets(households, firms, aggregate_tfp=1.0, config=config)
-        # Should have reasonable clearing error
-        assert result.market_clearing_error < 10.0  # not perfectly cleared but bounded
+        expected_gap = abs(produce_output(firms[0], config.alpha) - result.aggregate_output)
+        assert result.market_clearing_error == pytest.approx(expected_gap)
+        assert math.isfinite(result.market_clearing_error)
 
     def test_non_convergence_records_error(self) -> None:
         """With very few iterations, should still return valid prices."""
@@ -302,6 +306,24 @@ class TestAnalyticalEquilibrium:
         assert result.market_clearing_error == 0.0
         assert result.labor_excess_demand == 0.0
         assert result.capital_excess_demand == 0.0
+
+    def test_analytical_output_not_replaced_by_firm_max(self) -> None:
+        """Analytical path should keep Y from analytical inputs and expose mismatch."""
+        households = [_make_household(f"agent_{i:04d}", wealth=1.0) for i in range(4)]
+        firms = [_make_firm(capital=1000.0, tfp=2.0, labor_demand=50.0)]
+        config = SimulationConfigV2(num_agents=20, seed=42, alpha=0.33, delta=0.1)
+
+        total_l = 10.0
+        total_k = 10.0
+        expected_y = 1.0 * (total_k**config.alpha) * (total_l ** (1.0 - config.alpha))
+        firm_output = produce_output(firms[0], config.alpha)
+
+        result = _analytical_equilibrium(
+            households, firms, total_l, total_k, aggregate_tfp=1.0, config=config
+        )
+
+        assert result.aggregate_output == pytest.approx(expected_y)
+        assert result.market_clearing_error == pytest.approx(abs(firm_output - expected_y))
 
     def test_higher_alpha_higher_interest(self) -> None:
         """Higher capital share should give higher return to capital."""

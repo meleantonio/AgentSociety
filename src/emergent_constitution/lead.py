@@ -595,9 +595,17 @@ class LeadV2:
         # Step 2b: Nominal block (REQ-310..315)
         if self._nominal_block is not None:
             self._nominal_state = self._compute_nominal(market, shocks)
-            # Pass real bond rate to market state for household solver
+            # Keep capital and bond returns explicit; legacy interest_rate
+            # mirrors the effective bond return used by household solvers.
+            capital_rate = (
+                market.capital_rate if market.capital_rate is not None else market.interest_rate
+            )
             market = market.model_copy(
-                update={"interest_rate": self._nominal_state.real_bond_rate}
+                update={
+                    "interest_rate": self._nominal_state.real_bond_rate,
+                    "bond_rate": self._nominal_state.real_bond_rate,
+                    "capital_rate": capital_rate,
+                }
             )
 
         # Step 3: Collect decisions
@@ -633,6 +641,7 @@ class LeadV2:
 
         # Step 5: Execute production
         firms = self._execute_production(firms, entre_decisions, households, market)
+        self._refresh_household_incomes_after_production(households, firms, market, econ_decisions)
 
         # Step 6: Enforce constitution
         households, public_goods = self._enforce_constitution(
@@ -654,7 +663,9 @@ class LeadV2:
         )
 
         # Step 7b: Update government budget (REQ-306..309)
-        self._update_government(households, market, public_goods)
+        constitution, market = self._update_government(
+            households, constitution, market, public_goods
+        )
 
         # Step 8: Update states
         households = self._update_states(households, econ_decisions, market, public_goods, firms)
@@ -675,12 +686,9 @@ class LeadV2:
                 transfer=avg_transfer,
             )
 
-        # Update market aggregates with actual post-Step-8 values
-        market = market.model_copy(
-            update={
-                "aggregate_consumption": sum(h.consumption for h in households),
-            }
-        )
+        # Reconcile and persist aggregate accounting after all within-period
+        # household and fiscal updates.
+        market = self._reconcile_market_aggregates(market, households, firms, public_goods)
 
         # Step 9: Observe
         self._observe_period(t, households, firms, market, constitution, proposals, votes)
@@ -830,6 +838,9 @@ class LeadV2:
         use_llm_for_economic = (
             self._llm_engine is not None and self.config.use_llm and not self.config.benchmark_mode
         )
+        expected_public_goods, expected_transfer = self._expected_fiscal_inputs(
+            households, constitution
+        )
 
         # Economic decisions
         if use_llm_for_economic:
@@ -841,16 +852,12 @@ class LeadV2:
         else:
             # Extract flat tax rate from constitution
             tax_rate = self._get_tax_rate(constitution)
-            public_goods = self.constitution_engine.enforce_public_goods(
-                constitution, 0.0, len(households)
-            )
-            transfer = 0.0  # Will be computed in step 6
             econ_decisions = self._solver.solve_all(
                 households=households,
                 market=market,
                 constitution_tax_rate=tax_rate,
-                public_goods=public_goods,
-                transfer=transfer,
+                public_goods=expected_public_goods,
+                transfer=expected_transfer,
             )
 
         # Entrepreneurial decisions
@@ -863,16 +870,13 @@ class LeadV2:
             )
         else:
             # Benchmark mode: solver-driven entrepreneurial decisions
-            entre_public_goods = self.constitution_engine.enforce_public_goods(
-                constitution, 0.0, len(households)
-            )
             # Pass VFI value function for Bellman-based occupational choice (REQ-110)
             vfi_value_func, vfi_a_grid = self._solver.get_value_function()
             entre_decisions = self._entre_solver.solve_all(
                 households,
                 firms,
                 market,
-                public_goods=entre_public_goods,
+                public_goods=expected_public_goods,
                 vfi_value_func=vfi_value_func,
                 a_grid=vfi_a_grid,
             )
@@ -884,6 +888,26 @@ class LeadV2:
         )
 
         return econ_decisions, entre_decisions
+
+    def _expected_fiscal_inputs(
+        self,
+        households: list[HouseholdState],
+        constitution: ConstitutionV2,
+    ) -> tuple[float, float]:
+        """Build lagged fiscal expectations for Step 3 decision solving."""
+        n_households = len(households)
+        if n_households == 0:
+            return 0.0, 0.0
+
+        lagged_revenue = sum(max(h.taxes_paid, 0.0) for h in households)
+        expected_public_goods = self.constitution_engine.enforce_public_goods(
+            constitution, lagged_revenue, n_households
+        )
+        if expected_public_goods <= 0.0 and self.period_state.market.government_spending > 0.0:
+            expected_public_goods = self.period_state.market.government_spending / n_households
+
+        expected_transfer = sum(max(h.transfers_received, 0.0) for h in households) / n_households
+        return expected_public_goods, expected_transfer
 
     # ------------------------------------------------------------------
     # Step 4: Validate constraints (REQ-004, 005, PROP-002, PROP-004)
@@ -1038,24 +1062,33 @@ class LeadV2:
                     )
                 continue
 
-            # Produce output (REQ-007)
-            output = produce_output(firm, self.config.alpha)
+            labor_demand = (
+                owner_decision.labor_demand
+                if owner_decision.labor_demand > 0.0
+                else firm.labor_demand
+            )
+            priced_firm = firm.model_copy(update={"labor_demand": labor_demand})
+
+            # Produce output (REQ-007) using decision-updated labor demand.
+            output = produce_output(priced_firm, self.config.alpha)
 
             # Distribute income (REQ-008)
+            capital_rate = (
+                market.capital_rate if market.capital_rate is not None else market.interest_rate
+            )
             wages_paid, capital_cost, profit = distribute_firm_income(
-                firm.model_copy(update={"output": output}),
+                priced_firm.model_copy(update={"output": output}),
                 market.wage,
-                market.interest_rate,
+                capital_rate,
                 self.config.delta,
             )
+            _ = (wages_paid, capital_cost)
 
             # Update firm with results
             firm_update = {
                 "output": output,
                 "profit": profit,
-                "labor_demand": owner_decision.labor_demand
-                if owner_decision.labor_demand > 0
-                else firm.labor_demand,
+                "labor_demand": labor_demand,
                 "rd_spend": owner_decision.rd_spend,
             }
             updated_firm = firm.model_copy(update=firm_update)
@@ -1106,6 +1139,35 @@ class LeadV2:
         )
 
         return updated_firms
+
+    def _refresh_household_incomes_after_production(
+        self,
+        households: list[HouseholdState],
+        firms: list[FirmState],
+        market: MarketState,
+        econ_decisions: dict[str, EconomicDecision],
+    ) -> None:
+        """Refresh household income/labor fields so taxes see current profits."""
+        firm_profit_by_owner: dict[str, float] = {}
+        for firm in firms:
+            firm_profit_by_owner[firm.owner_id] = (
+                firm_profit_by_owner.get(firm.owner_id, 0.0) + firm.profit
+            )
+
+        for household in households:
+            decision = econ_decisions.get(
+                household.id, EconomicDecision(consumption=0.0, leisure=0.5)
+            )
+            labor_supply = 1.0 - decision.leisure
+            labor_income = market.wage * household.productivity * labor_supply
+            firm_profit = firm_profit_by_owner.get(household.id, 0.0)
+
+            if self.config.fix_entrepreneur_budget and household.id in firm_profit_by_owner:
+                household.labor_supply = 0.0
+                household.income = firm_profit
+            else:
+                household.labor_supply = labor_supply
+                household.income = labor_income + firm_profit
 
     # ------------------------------------------------------------------
     # Step 6: Enforce constitution (REQ-022)
@@ -1166,6 +1228,16 @@ class LeadV2:
         )
 
         return households, public_goods
+
+    @staticmethod
+    def _assign_proposal_ids(proposals: list[ConstitutionalProposal], period: int) -> None:
+        """Ensure each proposal has a unique identifier for vote tracking."""
+        for idx, proposal in enumerate(proposals):
+            if proposal.proposal_id:
+                continue
+            proposals[idx] = proposal.model_copy(
+                update={"proposal_id": f"p{period:04d}_{idx:04d}_{proposal.proposer_id}"}
+            )
 
     # ------------------------------------------------------------------
     # Step 7: Process governance (REQ-019..021, REQ-023)
@@ -1234,6 +1306,8 @@ class LeadV2:
                             reason=reason,
                         )
 
+            self._assign_proposal_ids(proposals, t)
+
             # Extract votes from political decisions
             for agent_id, decision in political_decisions.items():
                 if decision.votes:
@@ -1260,6 +1334,8 @@ class LeadV2:
                             reason=reason,
                         )
 
+            self._assign_proposal_ids(proposals, t)
+
             # Collect votes from all households
             if proposals:
                 for h in households:
@@ -1270,11 +1346,24 @@ class LeadV2:
         # Tally votes for each proposal
         vote_outcomes: list[VoteOutcomeV2] = []
         total_eligible = len(households)
+        legacy_rule_vote_consumed: dict[str, set[str]] = {}
 
         for proposal in proposals:
+            proposal_vote_key = proposal.proposal_id or proposal.rule_name
             proposal_votes: dict[str, bool] = {}
             for agent_id, agent_vote_map in all_votes.items():
-                vote = agent_vote_map.get(proposal.rule_name)
+                vote = agent_vote_map.get(proposal_vote_key)
+                if vote is None:
+                    # Backward-compatible fallback for legacy vote maps keyed by
+                    # rule name. Consume at most one vote per (agent, rule) to
+                    # avoid proposal-collision double counting.
+                    legacy_vote = agent_vote_map.get(proposal.rule_name)
+                    if legacy_vote is not None:
+                        used_rules = legacy_rule_vote_consumed.setdefault(agent_id, set())
+                        if proposal.rule_name in used_rules:
+                            continue
+                        used_rules.add(proposal.rule_name)
+                        vote = legacy_vote
                 if vote is not None:
                     proposal_votes[agent_id] = vote
 
@@ -1283,6 +1372,7 @@ class LeadV2:
             self._recent_vote_outcomes.append(
                 {
                     "period": t,
+                    "proposal_id": proposal.proposal_id,
                     "rule_name": proposal.rule_name,
                     "action": proposal.action,
                     "outcome": "passed" if outcome.passed else "voted_down",
@@ -1316,9 +1406,10 @@ class LeadV2:
     def _update_government(
         self,
         households: list[HouseholdState],
+        constitution: ConstitutionV2,
         market: MarketState,
         public_goods: float,
-    ) -> None:
+    ) -> tuple[ConstitutionV2, MarketState]:
         """Update government budget and apply fiscal rule.
 
         Computes bond market clearing rate, updates the government budget
@@ -1330,23 +1421,26 @@ class LeadV2:
 
         Args:
             households: Current household states (with taxes_paid, transfers_received).
+            constitution: Current constitution (for tax-rule feedback).
             market: Current market equilibrium.
             public_goods: Public goods per capita this period.
         """
         # Skip if no government debt to manage
         if self.config.initial_debt <= 0.0 and self._government.state.debt <= 0.0:
-            return
+            return constitution, market
 
         # Compute fiscal aggregates from household states
         tax_revenue = sum(h.taxes_paid for h in households)
         transfers = sum(h.transfers_received for h in households)
         spending = public_goods * len(households)
 
+        base_bond_rate = market.bond_rate if market.bond_rate is not None else market.interest_rate
+
         # Clear bond market to find equilibrium bond rate (REQ-307)
         bond_rate, clearing_error = clear_bond_market(
             households=households,
             government_debt=max(self._government.state.debt, 0.0),
-            base_interest_rate=market.interest_rate,
+            base_interest_rate=base_bond_rate,
         )
 
         # Update government budget constraint (REQ-306, PROP-010)
@@ -1361,12 +1455,95 @@ class LeadV2:
         output = market.aggregate_output if market.aggregate_output > 0.0 else 1.0
         tax_adjustment = self._government.fiscal_rule(output)
 
+        market = market.model_copy(update={"bond_rate": bond_rate})
+
         if tax_adjustment > 0.0:
+            constitution = self._apply_fiscal_tax_adjustment(constitution, tax_adjustment)
             log.info(
                 "step7b.fiscal_rule_active",
                 debt_to_gdp=round(self._government.state.debt_to_gdp, 4),
                 tax_adjustment=tax_adjustment,
+                bond_clearing_error=round(clearing_error, 8),
             )
+
+        return constitution, market
+
+    def _apply_fiscal_tax_adjustment(
+        self,
+        constitution: ConstitutionV2,
+        tax_adjustment: float,
+    ) -> ConstitutionV2:
+        """Apply fiscal-rule tax feedback to the first active tax rule."""
+        tax_rules = constitution.get_tax_rules()
+        if not tax_rules:
+            log.warning(
+                "step7b.fiscal_rule_no_tax_rule",
+                tax_adjustment=round(tax_adjustment, 6),
+            )
+            return constitution
+
+        target_rule = tax_rules[0]
+        old_rate = float(target_rule.parameters.get("rate", 0.0))
+        new_rate = max(0.0, min(1.0, old_rate + tax_adjustment))
+        if abs(new_rate - old_rate) < 1e-12:
+            return constitution
+
+        updated_rule = target_rule.model_copy(
+            update={
+                "parameters": {**target_rule.parameters, "rate": new_rate},
+                "version": target_rule.version + 1,
+            }
+        )
+        updated_constitution = constitution.model_copy(deep=True)
+        updated_constitution.rules[target_rule.name] = updated_rule
+        log.info(
+            "step7b.fiscal_rule_applied_to_tax",
+            rule=target_rule.name,
+            old_rate=round(old_rate, 6),
+            new_rate=round(new_rate, 6),
+        )
+        return updated_constitution
+
+    def _reconcile_market_aggregates(
+        self,
+        market: MarketState,
+        households: list[HouseholdState],
+        firms: list[FirmState],
+        public_goods: float,
+    ) -> MarketState:
+        """Recompute aggregate ledger and expose resource residual explicitly."""
+        aggregate_consumption = sum(h.consumption for h in households)
+        if firms:
+            aggregate_output = sum(max(f.output, 0.0) for f in firms)
+            aggregate_investment = sum(max(f.capital, 0.0) * self.config.delta for f in firms)
+        else:
+            aggregate_output = max(market.aggregate_output, 0.0)
+            aggregate_investment = max(market.aggregate_investment, 0.0)
+
+        government_spending = max(public_goods * len(households), 0.0)
+        resource_residual = (
+            aggregate_output - aggregate_consumption - aggregate_investment - government_spending
+        )
+
+        if abs(resource_residual) > 1e-6:
+            log.debug(
+                "step8.aggregate_residual",
+                residual=round(resource_residual, 6),
+                output=round(aggregate_output, 4),
+                consumption=round(aggregate_consumption, 4),
+                investment=round(aggregate_investment, 4),
+                government_spending=round(government_spending, 4),
+            )
+
+        return market.model_copy(
+            update={
+                "aggregate_output": aggregate_output,
+                "aggregate_consumption": aggregate_consumption,
+                "aggregate_investment": aggregate_investment,
+                "government_spending": government_spending,
+                "resource_residual": resource_residual,
+            }
+        )
 
     # ------------------------------------------------------------------
     # Step 8: Update states (REQ-001, 003, 006, 010)
@@ -1432,6 +1609,14 @@ class LeadV2:
             # income/tax/transfer accounting, but two-asset mode tracks
             # explicit liquid/illiquid positions.
             if self.config.two_asset_mode:
+                bond_rate = (
+                    market.bond_rate if market.bond_rate is not None else market.interest_rate
+                )
+                capital_rate = (
+                    market.capital_rate
+                    if market.capital_rate is not None
+                    else market.interest_rate
+                )
                 liquid_prev = h.liquid
                 illiquid_prev = h.illiquid
 
@@ -1442,7 +1627,7 @@ class LeadV2:
                     illiquid_prev = max(0.0, h.wealth - liquid_prev)
 
                 liquid_resources = (
-                    (1.0 + market.interest_rate) * liquid_prev
+                    (1.0 + bond_rate) * liquid_prev
                     + total_income
                     - consumption
                     - h.taxes_paid
@@ -1483,7 +1668,7 @@ class LeadV2:
                 new_liquid = liquid_resources - deposit - adjust_cost
                 new_illiquid = max(
                     0.0,
-                    (1.0 + market.interest_rate) * illiquid_prev + deposit,
+                    (1.0 + capital_rate) * illiquid_prev + deposit,
                 )
 
                 # Enforce borrowing constraint on liquid assets with internal
