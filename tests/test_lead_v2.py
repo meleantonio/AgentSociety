@@ -10,16 +10,20 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
 import pytest
 
 from emergent_constitution.config import SimulationConfigV2
+from emergent_constitution.economics import produce_output
 from emergent_constitution.lead import LeadV2
 from emergent_constitution.llm_engine import LLMDecisionEngine
 from emergent_constitution.models.constitution import ConstitutionV2
 from emergent_constitution.models.decisions import EconomicDecision, EntrepreneurialDecision
+from emergent_constitution.models.firm import FirmState
 from emergent_constitution.models.history import HistoryEntryV2, PeriodState, SimulationOutputV2
 from emergent_constitution.models.household import OccupationalRole
 from emergent_constitution.models.market import MarketState
+from emergent_constitution.models.proposal import ConstitutionalProposal
 from emergent_constitution.models.shocks import ShockState
 from emergent_constitution.observer import ObserverV2, detect_rule_changes_v2
 
@@ -323,6 +327,164 @@ class TestLLMMode:
             assert 0.0 <= h.leisure <= 1.0
 
 
+class TestPureBellmanMode:
+    """Test pure Bellman governance mode with LLM economic decisions."""
+
+    def test_pure_bellman_populates_value_function(self) -> None:
+        config = SimulationConfigV2(
+            num_agents=20,
+            max_periods=1,
+            seed=42,
+            use_llm=True,
+            llm_provider="mock",
+            benchmark_mode=False,
+            pure_bellman_politics=True,
+            proposal_interval=1,
+            observer_interval=1,
+        )
+        lead = LeadV2(config)
+        lead._advance_period(1)
+
+        assert lead._llm_engine is not None
+        assert lead._llm_engine._value_function is not None
+        assert lead._llm_engine._a_grid is not None
+
+    def test_pure_bellman_generates_proposals_and_votes(self) -> None:
+        config = SimulationConfigV2(
+            num_agents=20,
+            max_periods=1,
+            seed=21,
+            use_llm=False,
+            benchmark_mode=True,
+            pure_bellman_politics=True,
+            proposal_interval=1,
+            observer_interval=1,
+        )
+        lead = LeadV2(config)
+        period_state = lead._advance_period(1)
+
+        assert len(period_state.proposals) > 0
+        assert len(period_state.votes) == len(period_state.proposals)
+        for outcome in period_state.votes:
+            assert outcome.total_eligible == config.num_agents
+
+
+class TestGovernanceVoteKeys:
+    """Proposal-level vote keying should avoid rule-name collisions."""
+
+    def test_same_rule_proposals_keep_distinct_tallies(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        config = SimulationConfigV2(
+            num_agents=20,
+            max_periods=1,
+            seed=7,
+            benchmark_mode=True,
+            proposal_interval=1,
+            observer_interval=1,
+        )
+        lead = LeadV2(config)
+        households = [h.model_copy(deep=True) for h in lead.period_state.households[:3]]
+        constitution = lead.period_state.constitution
+        market = lead.period_state.market
+
+        proposer_a = households[0].id
+        proposer_b = households[1].id
+
+        def fake_decide_proposal_v2(
+            household: object,
+            _constitution: ConstitutionV2,
+            _num_agents: int,
+            _rng: object,
+        ) -> ConstitutionalProposal | None:
+            h = household
+            if getattr(h, "id", "") == proposer_a:
+                return ConstitutionalProposal(
+                    proposer_id=proposer_a,
+                    action="modify",
+                    rule_name="flat_tax",
+                    parameters={"rate": 0.21},
+                    description="tax option A",
+                )
+            if getattr(h, "id", "") == proposer_b:
+                return ConstitutionalProposal(
+                    proposer_id=proposer_b,
+                    action="modify",
+                    rule_name="flat_tax",
+                    parameters={"rate": 0.31},
+                    description="tax option B",
+                )
+            return None
+
+        def fake_decide_votes_v2(
+            household: object,
+            proposals: list[ConstitutionalProposal],
+            _constitution: ConstitutionV2,
+        ) -> dict[str, bool]:
+            h_id = getattr(household, "id", "")
+            p1, p2 = proposals
+            if h_id == proposer_a:
+                return {p1.proposal_id: True, p2.proposal_id: False}
+            if h_id == proposer_b:
+                return {p1.proposal_id: False, p2.proposal_id: False}
+            return {p1.proposal_id: True, p2.proposal_id: True}
+
+        monkeypatch.setattr(
+            "emergent_constitution.lead.decide_proposal_v2",
+            fake_decide_proposal_v2,
+        )
+        monkeypatch.setattr(
+            "emergent_constitution.lead.decide_votes_v2",
+            fake_decide_votes_v2,
+        )
+
+        proposals, vote_outcomes, _ = lead._process_governance(1, households, constitution, market)
+        assert len(proposals) == 2
+        assert proposals[0].proposal_id and proposals[1].proposal_id
+        assert proposals[0].proposal_id != proposals[1].proposal_id
+        assert len(vote_outcomes) == 2
+        assert vote_outcomes[0].votes_for == 2
+        assert vote_outcomes[1].votes_for == 1
+
+
+class TestGovernmentFeedback:
+    """Fiscal rule should feed back into effective tax policy."""
+
+    def test_fiscal_rule_adjusts_tax_rule(self) -> None:
+        config = SimulationConfigV2(
+            num_agents=20,
+            max_periods=1,
+            seed=11,
+            benchmark_mode=True,
+            initial_debt=400.0,
+            debt_gdp_max=0.5,
+            fiscal_rule_adjustment=0.05,
+            observer_interval=1,
+        )
+        lead = LeadV2(config)
+        households = [h.model_copy(deep=True) for h in lead.period_state.households]
+        for household in households:
+            household.taxes_paid = 0.0
+            household.transfers_received = 0.0
+
+        constitution = lead.period_state.constitution
+        market = lead.period_state.market.model_copy(
+            update={"aggregate_output": 100.0, "interest_rate": 0.02, "bond_rate": 0.02}
+        )
+        old_rate = lead._get_tax_rate(constitution)
+
+        updated_constitution, updated_market = lead._update_government(
+            households=households,
+            constitution=constitution,
+            market=market,
+            public_goods=0.0,
+        )
+        new_rate = lead._get_tax_rate(updated_constitution)
+
+        assert new_rate == pytest.approx(min(1.0, old_rate + config.fiscal_rule_adjustment))
+        assert updated_market.bond_rate is not None
+
+
 # ============================================================================
 # Test Individual Steps
 # ============================================================================
@@ -405,11 +567,88 @@ class TestExecuteProduction:
             assert len(firms) == 1
             assert firms[0].owner_id == rich_agent.id
 
+    def test_firm_creation_records_principal_debit(
+        self, short_mock_config: SimulationConfigV2
+    ) -> None:
+        """Firm entry should debit sunk cost and track invested principal separately."""
+        lead = LeadV2(short_mock_config)
+        owner = lead.period_state.households[0].model_copy(update={"wealth": 200.0})
+        market = lead.period_state.market
+        entre = {
+            owner.id: EntrepreneurialDecision(
+                create_firm=True,
+                capital_investment=40.0,
+                labor_demand=1.0,
+            )
+        }
+
+        firms = lead._execute_production([], entre, [owner], market)
+        assert len(firms) == 1
+        assert lead._period_capital_debits[owner.id] == pytest.approx(
+            short_mock_config.firm_entry_cost
+        )
+        assert lead._period_principal_debits[owner.id] == pytest.approx(40.0)
+
+    def test_firm_liquidation_records_principal_credit(
+        self, short_mock_config: SimulationConfigV2
+    ) -> None:
+        """Firm liquidation should credit remaining principal to owner ledger."""
+        lead = LeadV2(short_mock_config)
+        owner = lead.period_state.households[0]
+        market = lead.period_state.market
+        firm = FirmState(
+            id="firm_close",
+            owner_id=owner.id,
+            owner_ability=owner.entrepreneurial_ability,
+            capital=25.0,
+            labor_demand=1.0,
+            tfp=1.0,
+        )
+        entre = {owner.id: EntrepreneurialDecision(close_firm=True)}
+
+        firms = lead._execute_production([firm], entre, [owner], market)
+        assert firms == []
+        assert lead._period_capital_credits.get(owner.id, 0.0) == pytest.approx(0.0)
+        assert lead._period_principal_credits[owner.id] == pytest.approx(25.0)
+
+    def test_output_uses_updated_labor_demand(self, short_mock_config: SimulationConfigV2) -> None:
+        """Same-period output should reflect owner-updated labor demand."""
+        lead = LeadV2(short_mock_config)
+        owner = lead.period_state.households[0]
+        market = lead.period_state.market
+        firm = FirmState(
+            id="firm_test",
+            owner_id=owner.id,
+            owner_ability=owner.entrepreneurial_ability,
+            capital=20.0,
+            labor_demand=0.5,
+            tfp=1.2,
+        )
+        entre = {
+            owner.id: EntrepreneurialDecision(
+                labor_demand=3.0,
+                rd_spend=0.0,
+                close_firm=False,
+            )
+        }
+
+        updated_firms = lead._execute_production([firm], entre, [owner], market)
+        assert len(updated_firms) == 1
+        updated = updated_firms[0]
+        expected_output = produce_output(
+            firm.model_copy(update={"labor_demand": 3.0}),
+            short_mock_config.alpha,
+        )
+        assert updated.labor_demand == pytest.approx(3.0)
+        assert updated.output == pytest.approx(expected_output, abs=1e-10)
+
 
 class TestEnforceConstitution:
     """Test step 6: constitution enforcement."""
 
-    def test_default_constitution_collects_tax(self, short_mock_config: SimulationConfigV2) -> None:
+    def test_default_constitution_collects_tax(
+        self, short_mock_config: SimulationConfigV2
+    ) -> None:
         """Default constitution has 10% tax; revenue is collected."""
         lead = LeadV2(short_mock_config)
         households = [h.model_copy(deep=True) for h in lead.period_state.households]
@@ -423,6 +662,46 @@ class TestEnforceConstitution:
 
         total_taxes = sum(h.taxes_paid for h in updated_h)
         assert total_taxes > 0.0  # 10% default tax should collect revenue
+
+    def test_taxes_use_post_production_profit_income(
+        self, short_mock_config: SimulationConfigV2
+    ) -> None:
+        """Tax base should include current-period entrepreneurial profit."""
+        config = short_mock_config.model_copy(update={"fix_entrepreneur_budget": True})
+        lead = LeadV2(config)
+        households = [h.model_copy(deep=True) for h in lead.period_state.households[:1]]
+        owner = households[0]
+        owner.role = OccupationalRole.ENTREPRENEUR
+
+        decision = EconomicDecision(consumption=0.0, leisure=0.5)
+        econ_decisions = {owner.id: decision}
+        firms = [
+            FirmState(
+                id="firm_tax_test",
+                owner_id=owner.id,
+                owner_ability=owner.entrepreneurial_ability,
+                capital=20.0,
+                labor_demand=2.0,
+                tfp=1.1,
+                profit=50.0,
+            )
+        ]
+
+        lead._refresh_household_incomes_after_production(
+            households=households,
+            firms=firms,
+            market=lead.period_state.market,
+            econ_decisions=econ_decisions,
+        )
+        updated_h, _ = lead._enforce_constitution(
+            households,
+            firms,
+            lead.period_state.constitution,
+            lead.period_state.market,
+        )
+
+        assert updated_h[0].income == pytest.approx(50.0)
+        assert updated_h[0].taxes_paid > 0.0
 
 
 class TestUpdateStates:
@@ -469,6 +748,191 @@ class TestUpdateStates:
             )
             # Labor income should be reflected in updated household
             assert upd.income == pytest.approx(labor_income, abs=1e-8)
+
+    def test_two_asset_illiquid_accrues_return(self) -> None:
+        """Two-asset transition should apply return on the illiquid stock."""
+        config = SimulationConfigV2(
+            num_agents=20,
+            max_periods=1,
+            seed=42,
+            benchmark_mode=True,
+            two_asset_mode=True,
+            b_min=0.0,
+            observer_interval=1,
+        )
+        lead = LeadV2(config)
+
+        base = lead.period_state.households[0].model_copy(
+            update={
+                "wealth": 100.0,
+                "liquid": 30.0,
+                "illiquid": 70.0,
+                "taxes_paid": 0.0,
+                "transfers_received": 0.0,
+            }
+        )
+        market = lead.period_state.market.model_copy(update={"wage": 0.0, "interest_rate": 0.05})
+        decisions = {base.id: EconomicDecision(consumption=0.0, leisure=1.0)}
+
+        updated = lead._update_states([base], decisions, market, 0.0, firms=[])
+        assert updated[0].illiquid == pytest.approx(73.5, abs=1e-8)
+
+    def test_two_asset_uses_bond_and_capital_rates(self) -> None:
+        """Liquid and illiquid assets should use bond/capital returns respectively."""
+        config = SimulationConfigV2(
+            num_agents=20,
+            max_periods=1,
+            seed=9,
+            benchmark_mode=True,
+            two_asset_mode=True,
+            b_min=0.0,
+            observer_interval=1,
+        )
+        lead = LeadV2(config)
+        base = lead.period_state.households[0].model_copy(
+            update={
+                "wealth": 100.0,
+                "liquid": 30.0,
+                "illiquid": 70.0,
+                "taxes_paid": 0.0,
+                "transfers_received": 0.0,
+            }
+        )
+        market = lead.period_state.market.model_copy(
+            update={
+                "wage": 0.0,
+                "interest_rate": 0.01,
+                "bond_rate": 0.02,
+                "capital_rate": 0.05,
+            }
+        )
+        decisions = {base.id: EconomicDecision(consumption=0.0, leisure=1.0)}
+
+        updated = lead._update_states([base], decisions, market, 0.0, firms=[])
+        assert updated[0].liquid == pytest.approx(30.6, abs=1e-8)
+        assert updated[0].illiquid == pytest.approx(73.5, abs=1e-8)
+
+    def test_entrepreneurial_capital_account_updates_with_principal_flows(self) -> None:
+        """Household entrepreneurial_capital should track principal debit/credit."""
+        config = SimulationConfigV2(
+            num_agents=20,
+            max_periods=1,
+            seed=13,
+            benchmark_mode=True,
+            observer_interval=1,
+        )
+        lead = LeadV2(config)
+        h = lead.period_state.households[0].model_copy(
+            update={
+                "wealth": 100.0,
+                "entrepreneurial_capital": 30.0,
+                "taxes_paid": 0.0,
+                "transfers_received": 0.0,
+            }
+        )
+        lead._period_principal_debits[h.id] = 12.0
+        lead._period_principal_credits[h.id] = 7.5
+        decisions = {h.id: EconomicDecision(consumption=0.0, leisure=1.0)}
+        market = lead.period_state.market.model_copy(update={"wage": 0.0, "interest_rate": 0.0})
+
+        updated = lead._update_states([h], decisions, market, 0.0, firms=[])
+        assert updated[0].entrepreneurial_capital == pytest.approx(25.5)
+
+
+class TestDistributionUpdate:
+    """Test step 8b distribution update bookkeeping."""
+
+    def test_policy_savings_includes_transfer(self) -> None:
+        config = SimulationConfigV2(
+            num_agents=20,
+            max_periods=1,
+            seed=42,
+            benchmark_mode=True,
+            distribution_mode="kfe",
+            observer_interval=1,
+        )
+        lead = LeadV2(config)
+        assert lead._distribution is not None
+
+        solver = lead._solver
+        n_a = len(solver.a_grid)
+        n_z = len(solver.productivity_grid)
+        c_policy = np.zeros((n_a, n_z), dtype=np.float64)
+        lei_policy = np.full((n_a, n_z), 0.5, dtype=np.float64)
+
+        def fake_solve_egm_cached(**_kwargs: object) -> tuple[np.ndarray, np.ndarray]:
+            return c_policy, lei_policy
+
+        solver.solve_egm_cached = fake_solve_egm_cached  # type: ignore[method-assign]
+
+        captured: list[np.ndarray] = []
+        original_forward = lead._distribution.forward
+
+        def capture_forward(policy_savings: np.ndarray, transition_matrix: np.ndarray) -> None:
+            captured.append(policy_savings.copy())
+            original_forward(policy_savings, transition_matrix)
+
+        lead._distribution.forward = capture_forward  # type: ignore[method-assign]
+
+        lead._update_distribution(
+            econ_decisions={},
+            households=lead.period_state.households,
+            market=lead.period_state.market,
+            constitution=lead.period_state.constitution,
+            public_goods=0.0,
+            transfer=0.0,
+        )
+        lead._update_distribution(
+            econ_decisions={},
+            households=lead.period_state.households,
+            market=lead.period_state.market,
+            constitution=lead.period_state.constitution,
+            public_goods=0.0,
+            transfer=1.25,
+        )
+
+        assert len(captured) == 2
+        assert np.allclose(captured[1] - captured[0], 1.25, atol=1e-10)
+
+
+class TestAggregateReconciliation:
+    """Test explicit aggregate ledger reconciliation."""
+
+    def test_resource_residual_recorded(self, short_mock_config: SimulationConfigV2) -> None:
+        lead = LeadV2(short_mock_config)
+        households = [h.model_copy(deep=True) for h in lead.period_state.households[:2]]
+        households[0].consumption = 5.0
+        households[1].consumption = 4.0
+
+        firms = [
+            FirmState(
+                id="firm_a",
+                owner_id=households[0].id,
+                owner_ability=households[0].entrepreneurial_ability,
+                capital=10.0,
+                labor_demand=1.0,
+                tfp=1.0,
+                output=12.0,
+            )
+        ]
+        market = lead.period_state.market.model_copy(
+            update={"aggregate_output": 0.0, "aggregate_investment": 0.0}
+        )
+        reconciled = lead._reconcile_market_aggregates(
+            market=market,
+            households=households,
+            firms=firms,
+            public_goods=1.0,
+        )
+
+        expected_investment = firms[0].capital * short_mock_config.delta
+        expected_residual = 12.0 - (9.0 + expected_investment + 2.0)
+
+        assert reconciled.aggregate_output == pytest.approx(12.0)
+        assert reconciled.aggregate_consumption == pytest.approx(9.0)
+        assert reconciled.aggregate_investment == pytest.approx(expected_investment)
+        assert reconciled.government_spending == pytest.approx(2.0)
+        assert reconciled.resource_residual == pytest.approx(expected_residual)
 
 
 class TestGiniComputation:

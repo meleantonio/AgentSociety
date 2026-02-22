@@ -77,6 +77,7 @@ class ConstitutionalProposal(BaseModel):
     """A proposal to add, modify, or remove a constitutional rule (v2).
 
     Args:
+        proposal_id: Unique identifier for proposal-level vote tracking.
         proposer_id: ID of the agent who proposed this.
         action: Whether to add, modify, or remove a rule.
         rule_name: Target rule name.
@@ -87,6 +88,7 @@ class ConstitutionalProposal(BaseModel):
         mechanism_effects: Structured effect declarations for novel institutions.
     """
 
+    proposal_id: str = ""
     proposer_id: str
     action: Literal["add", "modify", "remove"]
     rule_name: str

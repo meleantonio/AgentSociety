@@ -42,7 +42,7 @@ class PoliticalDecision(BaseModel):
 
     Args:
         proposal: Optional constitutional proposal.
-        votes: Mapping from proposal name to for/against.
+        votes: Mapping from proposal identifier to for/against.
     """
 
     proposal: ConstitutionalProposal | None = None

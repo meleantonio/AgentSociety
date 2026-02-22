@@ -144,12 +144,8 @@ class EGMSolver:
             self.n_b = _DEFAULT_A_GRID_SIZE  # liquid grid size
             self.n_k = _DEFAULT_K_GRID_SIZE  # illiquid grid size
             self.n_d = _DEFAULT_DEPOSIT_GRID_SIZE  # deposit grid size
-            self.b_grid = self._build_exponential_grid(
-                self._b_min, _DEFAULT_A_MAX, self.n_b
-            )
-            self.k_grid = self._build_exponential_grid(
-                0.0, _DEFAULT_K_MAX, self.n_k
-            )
+            self.b_grid = self._build_exponential_grid(self._b_min, _DEFAULT_A_MAX, self.n_b)
+            self.k_grid = self._build_exponential_grid(0.0, _DEFAULT_K_MAX, self.n_k)
             self._b_grid_np = np.array(self.b_grid, dtype=np.float64)
             self._k_grid_np = np.array(self.k_grid, dtype=np.float64)
             # Two-asset policy cache
@@ -476,9 +472,7 @@ class EGMSolver:
         for iteration in range(self.egm_max_iter):
             # Step 1: Expected marginal utility of savings (RHS of Euler eq)
             # For each (a'_j, z_s): RHS = beta * (1+r) * sum_{s'} Pi(s,s') * u_c(...)
-            mu_c = self._marginal_utility_c(
-                c_policy, lei_policy, g, alpha_u, beta_u, gamma_u
-            )
+            mu_c = self._marginal_utility_c(c_policy, lei_policy, g, alpha_u, beta_u, gamma_u)
             # Expected marginal utility: shape (n_a, n_z)
             # For each z_s, sum over z_s': Pi(s, s') * mu_c(a', s')
             e_mu_c = mu_c @ trans.T  # (n_a, n_z)
@@ -608,28 +602,20 @@ class EGMSolver:
         c_next = np.full_like(c_policy, _EPSILON)
         lei_next = np.full_like(lei_policy, 0.5)
         for zi in range(self.n_z):
-            c_next[:, zi] = np.interp(
-                a_prime[:, zi], self._a_grid_np, c_policy[:, zi]
-            )
-            lei_next[:, zi] = np.interp(
-                a_prime[:, zi], self._a_grid_np, lei_policy[:, zi]
-            )
+            c_next[:, zi] = np.interp(a_prime[:, zi], self._a_grid_np, c_policy[:, zi])
+            lei_next[:, zi] = np.interp(a_prime[:, zi], self._a_grid_np, lei_policy[:, zi])
 
         c_next = np.maximum(c_next, _EPSILON)
         lei_next = np.clip(lei_next, 0.0, 1.0)
 
         # RHS of Euler equation
-        mu_c_next = self._marginal_utility_c(
-            c_next, lei_next, g, alpha_u, beta_u, gamma_u
-        )
+        mu_c_next = self._marginal_utility_c(c_next, lei_next, g, alpha_u, beta_u, gamma_u)
         e_mu_c = mu_c_next @ self._trans_np.T
         rhs = beta_discount * gross_r * e_mu_c
 
         # Invert the Euler equation to get implied c_euler from RHS
         z_row = self._z_grid_np.reshape(1, self.n_z)
-        c_euler, _ = self._invert_euler_equation(
-            rhs, alpha_u, beta_u, gamma_u, wage, z_row, g
-        )
+        c_euler, _ = self._invert_euler_equation(rhs, alpha_u, beta_u, gamma_u, wage, z_row, g)
         c_euler = np.maximum(c_euler, _EPSILON)
 
         # Residual: |1 - c_euler / c_policy|
@@ -697,9 +683,7 @@ class EGMSolver:
         labor = 1.0 - lei_policy
         income = wage * z_row * labor
         income_flat = income.ravel()
-        tax_flat = np.array(
-            [tax_function(float(y)) for y in income_flat], dtype=np.float64
-        )
+        tax_flat = np.array([tax_function(float(y)) for y in income_flat], dtype=np.float64)
         tax = tax_flat.reshape(self.n_a, self.n_z)
         a_prime = gross_r * a_col + income - tax + transfer - c_policy
         a_prime = np.maximum(a_prime, self.a_min)
@@ -747,8 +731,15 @@ class EGMSolver:
         """
         tax_rate_proxy = tax_function(1.0) if wage > 0 else 0.0
         cache_key = self._make_cache_key(
-            alpha_u, beta_u, gamma_u, beta_discount,
-            wage, interest_rate, public_goods, transfer, tax_rate_proxy,
+            alpha_u,
+            beta_u,
+            gamma_u,
+            beta_discount,
+            wage,
+            interest_rate,
+            public_goods,
+            transfer,
+            tax_rate_proxy,
         )
 
         if cache_key in self._policy_cache:
@@ -756,8 +747,15 @@ class EGMSolver:
             return self._policy_cache[cache_key]
 
         c_policy, lei_policy = self.solve_egm(
-            alpha_u, beta_u, gamma_u, beta_discount,
-            wage, interest_rate, public_goods, tax_function, transfer,
+            alpha_u,
+            beta_u,
+            gamma_u,
+            beta_discount,
+            wage,
+            interest_rate,
+            public_goods,
+            tax_function,
+            transfer,
             political_flow_bonus=political_flow_bonus,
         )
 
@@ -765,8 +763,17 @@ class EGMSolver:
 
         # Compute value function from converged policy for entrepreneurial solver
         self._last_value_func = self._compute_value_function(
-            c_policy, lei_policy, alpha_u, beta_u, gamma_u,
-            beta_discount, wage, interest_rate, public_goods, tax_function, transfer,
+            c_policy,
+            lei_policy,
+            alpha_u,
+            beta_u,
+            gamma_u,
+            beta_discount,
+            wage,
+            interest_rate,
+            public_goods,
+            tax_function,
+            transfer,
             political_flow_bonus=political_flow_bonus,
         )
 
@@ -848,8 +855,11 @@ class EGMSolver:
                 political_flow_bonus=political_flow_bonus,
             )
             for h in households:
-                consumption = self._interpolate_policy(h.wealth, h.productivity_index, c_policy)
-                leisure = self._interpolate_policy(h.wealth, h.productivity_index, lei_policy)
+                state_wealth = h.liquid if self._two_asset_mode else h.wealth
+                consumption = self._interpolate_policy(
+                    state_wealth, h.productivity_index, c_policy
+                )
+                leisure = self._interpolate_policy(state_wealth, h.productivity_index, lei_policy)
                 consumption = max(consumption, 0.0)
                 leisure = max(0.0, min(1.0, leisure))
                 decisions[h.id] = EconomicDecision(consumption=consumption, leisure=leisure)
@@ -867,12 +877,11 @@ class EGMSolver:
                     transfer=transfer,
                     political_flow_bonus=political_flow_bonus,
                 )
+                state_wealth = h.liquid if self._two_asset_mode else h.wealth
                 consumption = self._interpolate_policy(
-                    h.wealth, h.productivity_index, c_policy
+                    state_wealth, h.productivity_index, c_policy
                 )
-                leisure = self._interpolate_policy(
-                    h.wealth, h.productivity_index, lei_policy
-                )
+                leisure = self._interpolate_policy(state_wealth, h.productivity_index, lei_policy)
                 consumption = max(consumption, 0.0)
                 leisure = max(0.0, min(1.0, leisure))
                 decisions[h.id] = EconomicDecision(consumption=consumption, leisure=leisure)

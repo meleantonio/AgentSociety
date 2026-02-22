@@ -10,7 +10,9 @@ class MarketState(BaseModel):
 
     Args:
         wage: w_t labor market clearing price.
-        interest_rate: r_t capital market clearing price.
+        interest_rate: Legacy effective return used by solvers.
+        capital_rate: r^k_t return on productive/illiquid capital.
+        bond_rate: r^b_t return on liquid government bonds.
         aggregate_output: Y_t total output.
         aggregate_consumption: C_t total consumption.
         aggregate_investment: I_t total investment.
@@ -18,10 +20,13 @@ class MarketState(BaseModel):
         market_clearing_error: |excess demand| (PROP-003: < 1e-6).
         labor_excess_demand: Labor demand minus labor supply.
         capital_excess_demand: Capital demand minus capital supply.
+        resource_residual: Goods-market residual Y - (C + I + G).
     """
 
     wage: float
     interest_rate: float
+    capital_rate: float | None = None
+    bond_rate: float | None = None
     aggregate_output: float = 0.0
     aggregate_consumption: float = 0.0
     aggregate_investment: float = 0.0
@@ -29,3 +34,4 @@ class MarketState(BaseModel):
     market_clearing_error: float = 0.0
     labor_excess_demand: float = 0.0
     capital_excess_demand: float = 0.0
+    resource_residual: float = 0.0

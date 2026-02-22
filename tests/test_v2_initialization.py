@@ -225,6 +225,29 @@ class TestCreateHouseholds:
         for h in households:
             assert abs(h.productivity - grid[h.productivity_index]) < 1e-10
 
+    def test_two_asset_split_keeps_wealth_consistent(self) -> None:
+        """In two-asset mode, wealth should match liquid + illiquid."""
+        config = SimulationConfigV2(
+            num_agents=20,
+            seed=42,
+            two_asset_mode=True,
+            b_min=10.0,
+            initial_wealth_mean=1.0,
+            initial_wealth_std=0.0,
+        )
+        rng = SimulationRNG(config.seed)
+        grid, trans = rouwenhorst_discretize(
+            rho=config.rho_z,
+            sigma=config.sigma_z,
+            n_states=config.num_z_states,
+        )
+        dist = _stationary_distribution(trans)
+        households = create_households(config, rng, grid, dist)
+
+        for h in households:
+            assert h.wealth == pytest.approx(h.liquid + h.illiquid, abs=1e-10)
+            assert h.liquid >= config.b_min
+
 
 # ============================================================================
 # initialize_simulation_v2 tests

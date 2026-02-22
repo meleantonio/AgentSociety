@@ -110,8 +110,7 @@ class EntrepreneurialSolver:
             return np.linalg.inv(mat)
         except np.linalg.LinAlgError:
             warnings.warn(
-                "Firm value matrix is singular. "
-                "Falling back to perpetuity formula.",
+                "Firm value matrix is singular. Falling back to perpetuity formula.",
                 stacklevel=2,
             )
             return None
@@ -134,6 +133,7 @@ class EntrepreneurialSolver:
         # Power iteration: start with uniform, multiply by P^T repeatedly
         pi = [1.0 / n] * n
         for _ in range(1000):
+            pi_old = list(pi)
             new_pi = [0.0] * n
             for j in range(n):
                 for i in range(n):
@@ -141,12 +141,13 @@ class EntrepreneurialSolver:
             # Normalize
             total = sum(new_pi)
             if total > 0:
-                pi = [p / total for p in new_pi]
+                new_pi_norm = [p / total for p in new_pi]
             else:
                 break
 
             # Check convergence
-            max_diff = max(abs(new_pi[i] / total - pi[i]) for i in range(n)) if total > 0 else 0.0
+            max_diff = max(abs(new_pi_norm[i] - pi_old[i]) for i in range(n))
+            pi = new_pi_norm
             if max_diff < 1e-12:
                 break
 
@@ -181,10 +182,13 @@ class EntrepreneurialSolver:
             return np.array([])
 
         # Compute profit for each ability grid point at this capital
-        profits = np.array([
-            self._compute_profit(self._ability_grid[j], capital, wage, interest_rate)
-            for j in range(n_e)
-        ], dtype=np.float64)
+        profits = np.array(
+            [
+                self._compute_profit(self._ability_grid[j], capital, wage, interest_rate)
+                for j in range(n_e)
+            ],
+            dtype=np.float64,
+        )
 
         if self._firm_value_matrix is not None:
             firm_values = self._firm_value_matrix @ profits
@@ -229,7 +233,7 @@ class EntrepreneurialSolver:
 
         opt_l = self._optimal_labor(ability, capital, wage)
         if opt_l > 0:
-            output = ability * (capital ** self._alpha) * (opt_l ** (1.0 - self._alpha))
+            output = ability * (capital**self._alpha) * (opt_l ** (1.0 - self._alpha))
         else:
             output = 0.0
         return output - wage * opt_l - (interest_rate + self._delta) * capital
@@ -423,7 +427,7 @@ class EntrepreneurialSolver:
 
         # Utility
         g = max(public_goods, _EPSILON)
-        per_period_utility = (consumption ** alpha_u) * (leisure ** beta_u) * (g ** gamma)
+        per_period_utility = (consumption**alpha_u) * (leisure**beta_u) * (g**gamma)
 
         # Continuation: use V^F Bellman for firm continuation value
         ability_idx = self._find_closest_grid_index(ability)
@@ -660,12 +664,24 @@ class EntrepreneurialSolver:
         """
         if self._use_bellman:
             return self.compute_entrepreneur_value_bellman(
-                household, ability, opt_capital, wage, interest_rate,
-                public_goods, is_entering, vfi_value_func, a_grid,
+                household,
+                ability,
+                opt_capital,
+                wage,
+                interest_rate,
+                public_goods,
+                is_entering,
+                vfi_value_func,
+                a_grid,
             )
         return self._compute_entrepreneur_value_legacy(
-            household, ability, opt_capital, wage, interest_rate,
-            public_goods, is_entering,
+            household,
+            ability,
+            opt_capital,
+            wage,
+            interest_rate,
+            public_goods,
+            is_entering,
         )
 
     def _compute_entrepreneur_value_legacy(

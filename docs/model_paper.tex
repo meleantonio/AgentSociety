@@ -352,6 +352,12 @@ An entrepreneur additionally receives firm profit:
 \end{equation}
 where $\pi_{f(i)}$ is the profit of the firm owned by agent $i$.
 
+To keep firm-finance accounting internally consistent, we track principal flows separately from current-period income. Let $D^{prin}_{it}$ denote principal debited from household $i$ when funding a new firm and $C^{prin}_{it}$ denote principal credited back when a firm is liquidated. The household entrepreneurial-capital account evolves as
+\begin{equation}\label{eq:entre_principal_ledger}
+  K^{H}_{i,t+1} = \max\{0,\, K^{H}_{it} - D^{prin}_{it} + C^{prin}_{it}\},
+\end{equation}
+and aggregate household entrepreneurial capital is reconciled each period against active-firm capital.
+
 \subsubsection{Goods Market Identity}
 
 By Walras' law, the goods market clears:
@@ -446,6 +452,7 @@ The constitutional amendment process follows four stages.
     \end{cases}
   \end{equation}
   where $V_{for}$ is the number of votes in favor and $N$ is the total number of eligible voters. Ties are resolved in favor of the status quo.
+  Each validated proposal is assigned a unique proposal identifier, and vote tallies are keyed by proposal ID (not rule name), so concurrent amendments to the same rule are evaluated independently.
 
   \item \textbf{Amendment.} Passed proposals are applied to the constitution in order. Each application re-validates the resulting rule before activation. The constitution is immutable within a period and only updated between periods.
 \end{enumerate}
@@ -734,8 +741,8 @@ Each period $t$ executes nine steps in a fixed order, guaranteeing determinism.
 \textbf{Step 4: Validate constraints.} Project decisions onto feasible set: clamp $\ell \in [0,1]$, $c \leq budget - \underline{a}$, $a' \geq \underline{a}$.\;
 \textbf{Step 5: Execute production.} Compute firm outputs via \eqref{eq:firm_production}; distribute income via \eqref{eq:firm_profit}; apply R\&D shocks via \eqref{eq:rd_prob}; create/liquidate firms.\;
 \textbf{Step 6: Enforce constitution.} Apply tax rules, compute public goods, distribute transfers, apply regulations.\;
-\textbf{Step 7: Process governance.} Collect proposals, validate, vote, amend constitution (at proposal-interval periods). In benchmark mode, uses rule-based governance with dissatisfaction-driven proposals and value-weighted voting (\Cref{sec:benchmark}).\;
-\textbf{Step 8: Update states.} Apply DSGE-HA budget constraint: $a' = (1+r)a + y + \pi - c - T + Tr$; compute realized utility $u(c, \ell, G)$.\;
+\textbf{Step 7: Process governance.} Collect proposals, validate, vote, amend constitution (at proposal-interval periods). In benchmark mode, use deterministic rule-based governance (\Cref{sec:benchmark}) unless pure Bellman governance is enabled (\Cref{sec:pure_bellman_mode}).\;
+\textbf{Step 8: Update states.} Apply budget constraints (single-asset or two-asset), including entry-cost/principal debits and liquidation credits; compute realized utility $u(c, \ell, G)$.\;
 \textbf{Step 9: Observe.} Compute Gini, Pareto efficiency, aggregates (Y, C, I), wealth quantiles, welfare, firm stats; append to history.\;
 \end{algorithm}
 
@@ -759,7 +766,11 @@ The distribution is a probability mass array $\mu(a_j, z_s)$ of dimension $N_a \
 The KFE is advanced one period using the lottery allocation method of \citet{young2010}. For each grid cell $(a_j, z_s)$ with mass $\mu(a_j, z_s)$:
 
 \begin{enumerate}
-  \item \textbf{Policy lookup.} The savings policy gives $a' = g(a_j, z_s)$, the next-period asset level.
+  \item \textbf{Policy lookup.} The savings policy gives $a' = g(a_j, z_s)$, the next-period asset level:
+  \begin{equation}\label{eq:kfe_policy_savings}
+    g(a_j, z_s) = (1+r_t) a_j + w_t z_s \bigl(1-\ell^*(a_j,z_s)\bigr) - c^*(a_j,z_s) - T\!\left(w_t z_s (1-\ell^*(a_j,z_s))\right) + Tr_t.
+  \end{equation}
+  In particular, transfer income $Tr_t$ is included both in the policy solve and in the KFE savings reconstruction.
   \item \textbf{Grid bracket.} Find the bracket $a_{lo} \leq a' \leq a_{hi}$ on the asset grid.
   \item \textbf{Lottery weight.} Compute the interpolation weight for the upper bracket:
   \begin{equation}\label{eq:lottery_weight}
@@ -822,6 +833,22 @@ The two-asset budget constraint for a worker is:
   b' = (1 + r^b) b + wz(1-\ell) - c - T(y) + Tr - d - \chi(d, k),
 \end{equation}
 where $r^b$ is the bond rate from the Fisher equation and $d + \chi(d, k)$ is the total cost of adjusting illiquid holdings.
+Illiquid assets follow
+\begin{equation}\label{eq:two_asset_illiquid}
+  k' = (1 + r^k) k + d,
+\end{equation}
+where $r^k$ is the capital return. Total wealth is then $a' = b' + k'$.
+The deposit choice is constrained by feasibility ($d \geq -k$) and liquid borrowing limits ($b' \geq b_{min}$), with internal rebalancing from $k'$ when needed to satisfy $b_{min}$.
+
+\subsection{Initialization Consistency}
+
+In two-asset mode, initialization enforces accounting consistency when the liquid borrowing bound binds. Let initial total wealth draw be $\tilde{a}_0$; the model sets
+\begin{equation}\label{eq:two_asset_init}
+  a_0 = \max\{\tilde{a}_0, b_{min}\}, \qquad
+  b_0 = \min\{a_0, \max(b_{min}, 0.3a_0)\}, \qquad
+  k_0 = a_0 - b_0,
+\end{equation}
+ensuring $a_0 = b_0 + k_0$ for all households at initialization.
 
 \subsection{``Wealthy Hand-to-Mouth'' Agents}
 
@@ -957,6 +984,7 @@ When evaluating a proposed constitutional change $\calC' \neq \calC$, the welfar
 where the political component is the capitalized (perpetuity) value of the political utility change, and the economic component approximates the disposable income effect of the tax rate change $\Delta\tau = \tau(\calC') - \tau(\calC)$.
 
 Agent $i$ supports the proposal if $\Delta V_i > 0$. When \texttt{pure\_bellman\_politics} is active, this comparison replaces the LLM for all political decisions, yielding fully microfounded governance dynamics.
+Operationally, the governance step re-synchronizes Bellman objects each period: if the current value function is stale or missing, a solver pass at current $(w_t, r_t, G_t, Tr_t)$ is run before evaluating proposal-level $\Delta V_i$.
 
 \subsection{LLM Integration with Bellman Context}
 
@@ -1018,11 +1046,11 @@ Several design choices ensure reproducibility:
 
 \subsection{Benchmark Mode}\label{sec:benchmark}
 
-The model supports a \emph{benchmark mode} that disables LLM calls entirely. In benchmark mode:
+The model supports a \emph{benchmark mode} that disables external LLM API calls entirely. In benchmark mode:
 \begin{itemize}
   \item Economic decisions are computed by the VFI solver.
   \item Entrepreneurial decisions are computed by the utility-based occupational choice solver.
-  \item Governance uses rule-based decision-making via deterministic citizen logic.
+  \item Governance uses rule-based decision-making via deterministic citizen logic (default) or pure Bellman governance when enabled (\Cref{sec:pure_bellman_mode}).
 \end{itemize}
 
 Unlike earlier versions where the constitution remained static, benchmark mode now features a \emph{rule-based governance} system. Each agent's political behavior is determined algorithmically:
@@ -1038,6 +1066,12 @@ Unlike earlier versions where the constitution remained static, benchmark mode n
 \end{itemize}
 
 This enables controlled experiments that compare LLM-augmented governance against a well-defined rule-based baseline, rather than a static constitution.
+
+\subsection{Pure Bellman Governance Mode}\label{sec:pure_bellman_mode}
+
+When \texttt{pure\_bellman\_politics=True}, political decisions are computed directly from Bellman value comparisons and no LLM calls are used for governance. For each agent, a counterfactual constitutional perturbation is evaluated to compute $\Delta V_i$, which determines support/oppose direction. Proposal voting is then recomputed proposal-by-proposal by applying each validated proposal to the current constitution and evaluating its agent-specific value effect.
+
+To avoid degenerate governance rounds with zero proposals, the implementation injects one fallback tax proposal (when feasible) from the agent with largest $|\Delta V_i|$ whenever stochastic proposal generation would otherwise yield none. This keeps constitutional dynamics active while preserving value-based decision logic.
 
 
 % =============================================================================

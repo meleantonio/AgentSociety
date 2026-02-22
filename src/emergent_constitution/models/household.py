@@ -89,6 +89,7 @@ class HouseholdState(BaseModel):
         income: w_t * z_t * labor_supply.
         taxes_paid: Taxes paid this period.
         transfers_received: Transfers received this period.
+        entrepreneurial_capital: Principal currently tied up in owned firms.
         realized_utility: u(c_t, l_t, G_t) ground truth.
     """
 
@@ -118,6 +119,7 @@ class HouseholdState(BaseModel):
     income: float = 0.0
     taxes_paid: float = 0.0
     transfers_received: float = 0.0
+    entrepreneurial_capital: float = Field(default=0.0, ge=0.0)
     realized_utility: float = 0.0
 
     @property

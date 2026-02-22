@@ -276,7 +276,12 @@ def clear_markets_walrasian(
     """
     n_agents = len(households)
     if n_agents == 0:
-        return MarketState(wage=1.0, interest_rate=0.05)
+        return MarketState(
+            wage=1.0,
+            interest_rate=0.05,
+            capital_rate=0.05,
+            bond_rate=0.05,
+        )
 
     # Fallback: no firms -> representative firm (REQ-105)
     if not firms:
@@ -317,6 +322,8 @@ def clear_markets_walrasian(
     return MarketState(
         wage=w_star,
         interest_rate=r,
+        capital_rate=r,
+        bond_rate=r,
         aggregate_output=aggregate_output,
         aggregate_consumption=aggregate_consumption,
         aggregate_investment=aggregate_investment,
@@ -353,7 +360,7 @@ def _representative_firm_clearing(
 
     y = (
         aggregate_tfp
-        * (total_capital_supply ** config.alpha)
+        * (total_capital_supply**config.alpha)
         * (total_labor_supply ** (1.0 - config.alpha))
     )
 
@@ -366,6 +373,8 @@ def _representative_firm_clearing(
     return MarketState(
         wage=w,
         interest_rate=r,
+        capital_rate=r,
+        bond_rate=r,
         aggregate_output=y,
         aggregate_consumption=aggregate_consumption,
         aggregate_investment=aggregate_investment,
@@ -437,7 +446,12 @@ def _clear_markets_analytical(
     """
     n_agents = len(households)
     if n_agents == 0:
-        return MarketState(wage=1.0, interest_rate=0.05)
+        return MarketState(
+            wage=1.0,
+            interest_rate=0.05,
+            capital_rate=0.05,
+            bond_rate=0.05,
+        )
 
     # Aggregate supply from households
     # Use productivity * 0.5 as labor supply estimate when labor_supply is stale (0)
@@ -445,10 +459,7 @@ def _clear_markets_analytical(
     # supply — their labor is embedded in firm production (REQ-107).
     total_labor_supply = 0.0
     for h in households:
-        if (
-            config.fix_entrepreneur_budget
-            and h.role == OccupationalRole.ENTREPRENEUR
-        ):
+        if config.fix_entrepreneur_budget and h.role == OccupationalRole.ENTREPRENEUR:
             continue
         ls = h.labor_supply if h.labor_supply > 0.0 else 0.5
         total_labor_supply += h.productivity * ls
@@ -458,15 +469,24 @@ def _clear_markets_analytical(
     total_labor_supply = max(total_labor_supply, 1e-8)
     total_capital_supply = max(total_capital_supply, 1e-8)
 
-    # When firms exist, use their aggregate capital as the capital input
+    capital_excess = 0.0
+    # When firms exist, use firm capital as the analytical production input
+    # and track the gap vs household wealth as a diagnostic.
     if firms:
         firm_capital = sum(max(f.capital, 1e-10) for f in firms)
-        # Use the larger of firm capital and household wealth as effective K
-        k_agg = max(firm_capital, total_capital_supply)
+        k_agg = max(firm_capital, 1e-8)
+        capital_excess = firm_capital - total_capital_supply
+        if abs(capital_excess) > 1e-6:
+            log.debug(
+                "analytical.capital_mismatch",
+                firm_capital=round(firm_capital, 4),
+                household_capital=round(total_capital_supply, 4),
+                gap=round(capital_excess, 4),
+            )
     else:
         k_agg = total_capital_supply
 
-    return _analytical_equilibrium(
+    market = _analytical_equilibrium(
         households,
         firms,
         total_labor_supply,
@@ -474,6 +494,9 @@ def _clear_markets_analytical(
         aggregate_tfp,
         config,
     )
+    if abs(capital_excess) > 1e-12:
+        market = market.model_copy(update={"capital_excess_demand": capital_excess})
+    return market
 
 
 def _analytical_equilibrium(
@@ -518,16 +541,23 @@ def _analytical_equilibrium(
     w = max((1.0 - config.alpha) * y / total_labor_supply, _MIN_WAGE)
     r = max(config.alpha * y / total_capital_supply - config.delta, _MIN_INTEREST)
 
-    # Compute aggregate output from firms if present, otherwise use Y
+    # Keep analytical aggregate output as the canonical output metric on the
+    # analytical path; report firm-vs-analytical discrepancy as a diagnostic.
+    output_gap = 0.0
     if firms:
-        aggregate_output = 0.0
+        firm_output = 0.0
         for firm in firms:
-            firm_output = produce_output(firm, config.alpha)
-            aggregate_output += firm_output
-        # Use max of analytical and firm-based output for consistency
-        aggregate_output = max(aggregate_output, y)
-    else:
-        aggregate_output = y
+            firm_output += produce_output(firm, config.alpha)
+        output_gap = firm_output - y
+        if abs(output_gap) > 1e-6:
+            log.debug(
+                "analytical.output_mismatch",
+                analytical_output=round(y, 4),
+                firm_output=round(firm_output, 4),
+                gap=round(output_gap, 4),
+            )
+
+    aggregate_output = y
 
     aggregate_consumption = sum(h.consumption for h in households)
     if firms:
@@ -538,11 +568,13 @@ def _analytical_equilibrium(
     return MarketState(
         wage=w,
         interest_rate=r,
+        capital_rate=r,
+        bond_rate=r,
         aggregate_output=aggregate_output,
         aggregate_consumption=aggregate_consumption,
         aggregate_investment=aggregate_investment,
         government_spending=0.0,
-        market_clearing_error=0.0,
+        market_clearing_error=abs(output_gap),
         labor_excess_demand=0.0,
         capital_excess_demand=0.0,
     )

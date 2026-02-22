@@ -14,9 +14,7 @@ import pytest
 
 from emergent_constitution.citizen_v2 import decide_proposal_v2, decide_votes_v2
 from emergent_constitution.models.constitution import (
-    ConstitutionalRule,
     ConstitutionV2,
-    RuleType,
     create_default_constitution,
 )
 from emergent_constitution.models.household import HouseholdState, UtilityParams, ValueVector
@@ -113,8 +111,7 @@ class TestProposalAlignment:
                     break
 
         assert found_tax_increase, (
-            "High-equality agent should propose a tax increase from 0% "
-            "within 300 seeds"
+            "High-equality agent should propose a tax increase from 0% within 300 seeds"
         )
 
     def test_liberty_lover_proposes_tax_decrease(self) -> None:
@@ -137,8 +134,7 @@ class TestProposalAlignment:
                     break
 
         assert found_tax_decrease, (
-            "High-liberty agent should propose a tax decrease from 30% "
-            "within 300 seeds"
+            "High-liberty agent should propose a tax decrease from 30% within 300 seeds"
         )
 
 
@@ -215,9 +211,7 @@ class TestVoting:
         votes = decide_votes_v2(household, [proposal], constitution)
 
         assert "flat_tax" in votes
-        assert votes["flat_tax"] is True, (
-            "High-equality agent should vote FOR tax increase"
-        )
+        assert votes["flat_tax"] is True, "High-equality agent should vote FOR tax increase"
 
     def test_votes_against_misaligned_proposals(self) -> None:
         """Agents vote against proposals misaligned with their values.
@@ -339,6 +333,23 @@ class TestVoting:
         for v in votes.values():
             assert isinstance(v, bool), f"Vote value should be bool, got {type(v)}"
 
+    def test_votes_use_proposal_id_when_present(self) -> None:
+        """Vote keys should use proposal_id to disambiguate same-rule proposals."""
+        household = _make_household(equality=0.5)
+        constitution = create_default_constitution()
+        proposal = ConstitutionalProposal(
+            proposal_id="p_test_001",
+            proposer_id="agent_0001",
+            action="modify",
+            rule_name="flat_tax",
+            parameters={"rate": 0.2},
+            description="Tax change",
+        )
+
+        votes = decide_votes_v2(household, [proposal], constitution)
+        assert "p_test_001" in votes
+        assert "flat_tax" not in votes
+
 
 # ============================================================================
 # Proposal structure validation
@@ -403,9 +414,7 @@ class TestProposalStructure:
             if proposal is not None and "tax" in proposal.rule_name.lower():
                 rate = proposal.parameters.get("rate")
                 if rate is not None:
-                    assert 0.0 <= rate <= 1.0, (
-                        f"Tax rate {rate} is out of bounds [0, 1]"
-                    )
+                    assert 0.0 <= rate <= 1.0, f"Tax rate {rate} is out of bounds [0, 1]"
                     return
 
         pytest.fail("No tax proposal generated in 500 seeds")

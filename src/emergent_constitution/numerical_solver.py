@@ -80,19 +80,6 @@ class NumericalSolver:
         # Last computed VFI value function (REQ-110)
         self._last_value_func: list[list[float]] | None = None
 
-    def get_value_function(
-        self,
-    ) -> tuple[list[list[float]] | None, list[float]]:
-        """Return last-computed VFI value function and asset grid.
-
-        Returns:
-            (value_func, a_grid) or (None, a_grid) if not solved.
-        """
-        return self._last_value_func, self.a_grid
-
-        # Last computed VFI value function (for occupational choice, REQ-110)
-        self._last_value_func: list[list[float]] | None = None
-
     def get_value_function(self) -> tuple[list[list[float]] | None, list[float]]:
         """Return the last-computed VFI value function and asset grid.
 

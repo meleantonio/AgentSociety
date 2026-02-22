@@ -71,11 +71,13 @@ def decide_proposal_v2(
             # Propose rate change toward preferred
             new_rate = round(current_rate + (preferred_rate - current_rate) * 0.3, 3)
             new_rate = max(0.0, min(1.0, new_rate))
-            dissatisfaction.append((
-                tax_dissatisfaction,
-                tax_rule.name,
-                {"rate": new_rate},
-            ))
+            dissatisfaction.append(
+                (
+                    tax_dissatisfaction,
+                    tax_rule.name,
+                    {"rate": new_rate},
+                )
+            )
 
     # Transfer program dissatisfaction
     transfer_rules = constitution.get_transfer_rules()
@@ -84,17 +86,21 @@ def decide_proposal_v2(
         current_method = transfer_rule.parameters.get("method", "equal_share")
         # Equality-lovers prefer progressive, liberty-lovers prefer equal_share or none
         if eq > 0.6 and current_method != "progressive":
-            dissatisfaction.append((
-                eq * 0.4,
-                transfer_rule.name,
-                {"method": "progressive"},
-            ))
+            dissatisfaction.append(
+                (
+                    eq * 0.4,
+                    transfer_rule.name,
+                    {"method": "progressive"},
+                )
+            )
         elif eq < 0.4 and current_method == "progressive":
-            dissatisfaction.append((
-                (1.0 - eq) * 0.4,
-                transfer_rule.name,
-                {"method": "equal_share"},
-            ))
+            dissatisfaction.append(
+                (
+                    (1.0 - eq) * 0.4,
+                    transfer_rule.name,
+                    {"method": "equal_share"},
+                )
+            )
 
     # Public goods fraction dissatisfaction
     for rule in constitution.rules.values():
@@ -108,11 +114,13 @@ def decide_proposal_v2(
                     current_fraction + (preferred_fraction - current_fraction) * 0.3, 3
                 )
                 new_fraction = max(0.05, min(0.8, new_fraction))
-                dissatisfaction.append((
-                    pg_dissatisfaction,
-                    rule.name,
-                    {"fraction_of_revenue": new_fraction},
-                ))
+                dissatisfaction.append(
+                    (
+                        pg_dissatisfaction,
+                        rule.name,
+                        {"fraction_of_revenue": new_fraction},
+                    )
+                )
 
     # Voting threshold dissatisfaction
     voting_rule = constitution.get_active_voting_rule()
@@ -127,11 +135,13 @@ def decide_proposal_v2(
                 current_threshold + (preferred_threshold - current_threshold) * 0.3, 3
             )
             new_threshold = max(0.5, min(0.9, new_threshold))
-            dissatisfaction.append((
-                threshold_dissatisfaction * 0.5,  # Lower priority for voting rule changes
-                voting_rule.name,
-                {"threshold": new_threshold},
-            ))
+            dissatisfaction.append(
+                (
+                    threshold_dissatisfaction * 0.5,  # Lower priority for voting rule changes
+                    voting_rule.name,
+                    {"threshold": new_threshold},
+                )
+            )
 
     if not dissatisfaction:
         return None
@@ -166,7 +176,7 @@ def decide_votes_v2(
         constitution: The current constitution.
 
     Returns:
-        Mapping of rule_name -> vote (True=for, False=against).
+        Mapping of proposal_id (fallback: rule_name) -> vote (True=for, False=against).
     """
     if not proposals:
         return {}
@@ -178,7 +188,8 @@ def decide_votes_v2(
         value_alignment = _compute_value_alignment_v2(proposal, constitution, eq)
         self_interest = _compute_self_interest_v2(proposal, household)
         score = 0.6 * value_alignment + 0.4 * self_interest
-        votes[proposal.rule_name] = score > 0.5
+        vote_key = proposal.proposal_id or proposal.rule_name
+        votes[vote_key] = score > 0.5
 
     return votes
 
