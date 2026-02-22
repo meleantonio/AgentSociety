@@ -33,8 +33,10 @@ from emergent_constitution.models.decisions import (
 from emergent_constitution.models.firm import FirmState
 from emergent_constitution.models.household import HouseholdState
 from emergent_constitution.models.market import MarketState
+from emergent_constitution.models.proposal import ConstitutionalProposal
 from emergent_constitution.political_utility import (
     build_bellman_political_context,
+    evaluate_proposal,
     log_llm_bellman_deviation,
 )
 from emergent_constitution.rng import SimulationRNG
@@ -273,6 +275,35 @@ class LLMDecisionEngine:
         """
         self._observed_gini = gini
 
+    def _build_counterfactual_constitution(
+        self,
+        agent: HouseholdState,
+        constitution: ConstitutionV2,
+    ) -> ConstitutionV2:
+        """Build a nearby constitutional counterfactual for Bellman context.
+
+        Political contexts are proposal-agnostic at this stage, so we expose
+        Bellman preferences using a local tax-rule perturbation aligned with
+        the agent's equality/liberty weights.
+        """
+        proposed = constitution.model_copy(deep=True)
+        tax_rules = proposed.get_tax_rules()
+        if not tax_rules:
+            return proposed
+
+        rule = tax_rules[0]
+        current_rate = float(rule.parameters.get("rate", 0.0))
+        preferred_rate = max(0.0, min(1.0, agent.value_vector.equality * 0.5))
+
+        if abs(preferred_rate - current_rate) < 1e-8:
+            direction = 1.0 if agent.value_vector.equality >= agent.value_vector.liberty else -1.0
+            preferred_rate = max(0.0, min(1.0, current_rate + 0.01 * direction))
+
+        params = dict(rule.parameters)
+        params["rate"] = preferred_rate
+        proposed.rules[rule.name] = rule.model_copy(update={"parameters": params})
+        return proposed
+
     @property
     def bellman_deviation_count(self) -> int:
         """Number of times LLM overrode Bellman recommendation."""
@@ -462,11 +493,12 @@ class LLMDecisionEngine:
 
             # Add Bellman-derived political context (REQ-404)
             if self._value_function is not None and self._a_grid is not None:
+                counterfactual = self._build_counterfactual_constitution(h, constitution)
                 bellman_ctx = build_bellman_political_context(
                     value_function=self._value_function,
                     a_grid=self._a_grid,
                     agent=h,
-                    proposed_constitution=constitution,
+                    proposed_constitution=counterfactual,
                     current_constitution=constitution,
                     political_lambda=self._political_lambda,
                     observed_gini=self._observed_gini,
@@ -479,12 +511,45 @@ class LLMDecisionEngine:
         # Pure Bellman politics mode (REQ-405): bypass LLM entirely
         if self._pure_bellman_politics:
             decisions: dict[str, PoliticalDecision] = {}
+            tax_rules = constitution.get_tax_rules()
+            tax_rule_name = tax_rules[0].name if tax_rules else None
+            proposal_count = 0
+
             for h in households:
-                # In pure Bellman mode, no proposals, only votes from Bellman
-                decisions[h.id] = PoliticalDecision()
+                counterfactual = self._build_counterfactual_constitution(h, constitution)
+                delta_v = evaluate_proposal(
+                    value_function=self._value_function or [],
+                    a_grid=self._a_grid or [],
+                    agent=h,
+                    proposed_constitution=counterfactual,
+                    current_constitution=constitution,
+                    political_lambda=self._political_lambda,
+                    observed_gini=self._observed_gini,
+                )
+                support = delta_v > 0.0
+
+                votes: dict[str, bool] = {}
+                if tax_rule_name is not None:
+                    votes[tax_rule_name] = support
+
+                proposal: ConstitutionalProposal | None = None
+                if tax_rule_name is not None and abs(delta_v) > 1e-8 and self._rng.random() < 0.15:
+                    proposed_rule = counterfactual.rules.get(tax_rule_name)
+                    if proposed_rule is not None:
+                        proposal = ConstitutionalProposal(
+                            proposer_id=h.id,
+                            action="modify",
+                            rule_name=tax_rule_name,
+                            parameters=dict(proposed_rule.parameters),
+                            description="Bellman-derived tax adjustment proposal",
+                        )
+                        proposal_count += 1
+
+                decisions[h.id] = PoliticalDecision(proposal=proposal, votes=votes)
             log.info(
                 "llm_engine.pure_bellman_politics",
                 n_agents=len(households),
+                n_proposals=proposal_count,
             )
             return decisions
 

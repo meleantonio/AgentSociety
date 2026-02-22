@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
 import pytest
 
 from emergent_constitution.config import SimulationConfigV2
@@ -323,6 +324,29 @@ class TestLLMMode:
             assert 0.0 <= h.leisure <= 1.0
 
 
+class TestPureBellmanMode:
+    """Test pure Bellman governance mode with LLM economic decisions."""
+
+    def test_pure_bellman_populates_value_function(self) -> None:
+        config = SimulationConfigV2(
+            num_agents=20,
+            max_periods=1,
+            seed=42,
+            use_llm=True,
+            llm_provider="mock",
+            benchmark_mode=False,
+            pure_bellman_politics=True,
+            proposal_interval=1,
+            observer_interval=1,
+        )
+        lead = LeadV2(config)
+        lead._advance_period(1)
+
+        assert lead._llm_engine is not None
+        assert lead._llm_engine._value_function is not None
+        assert lead._llm_engine._a_grid is not None
+
+
 # ============================================================================
 # Test Individual Steps
 # ============================================================================
@@ -409,7 +433,9 @@ class TestExecuteProduction:
 class TestEnforceConstitution:
     """Test step 6: constitution enforcement."""
 
-    def test_default_constitution_collects_tax(self, short_mock_config: SimulationConfigV2) -> None:
+    def test_default_constitution_collects_tax(
+        self, short_mock_config: SimulationConfigV2
+    ) -> None:
         """Default constitution has 10% tax; revenue is collected."""
         lead = LeadV2(short_mock_config)
         households = [h.model_copy(deep=True) for h in lead.period_state.households]
@@ -469,6 +495,90 @@ class TestUpdateStates:
             )
             # Labor income should be reflected in updated household
             assert upd.income == pytest.approx(labor_income, abs=1e-8)
+
+    def test_two_asset_illiquid_accrues_return(self) -> None:
+        """Two-asset transition should apply return on the illiquid stock."""
+        config = SimulationConfigV2(
+            num_agents=20,
+            max_periods=1,
+            seed=42,
+            benchmark_mode=True,
+            two_asset_mode=True,
+            b_min=0.0,
+            observer_interval=1,
+        )
+        lead = LeadV2(config)
+
+        base = lead.period_state.households[0].model_copy(
+            update={
+                "wealth": 100.0,
+                "liquid": 30.0,
+                "illiquid": 70.0,
+                "taxes_paid": 0.0,
+                "transfers_received": 0.0,
+            }
+        )
+        market = lead.period_state.market.model_copy(update={"wage": 0.0, "interest_rate": 0.05})
+        decisions = {base.id: EconomicDecision(consumption=0.0, leisure=1.0)}
+
+        updated = lead._update_states([base], decisions, market, 0.0, firms=[])
+        assert updated[0].illiquid == pytest.approx(73.5, abs=1e-8)
+
+
+class TestDistributionUpdate:
+    """Test step 8b distribution update bookkeeping."""
+
+    def test_policy_savings_includes_transfer(self) -> None:
+        config = SimulationConfigV2(
+            num_agents=20,
+            max_periods=1,
+            seed=42,
+            benchmark_mode=True,
+            distribution_mode="kfe",
+            observer_interval=1,
+        )
+        lead = LeadV2(config)
+        assert lead._distribution is not None
+
+        solver = lead._solver
+        n_a = len(solver.a_grid)
+        n_z = len(solver.productivity_grid)
+        c_policy = np.zeros((n_a, n_z), dtype=np.float64)
+        lei_policy = np.full((n_a, n_z), 0.5, dtype=np.float64)
+
+        def fake_solve_egm_cached(**_kwargs: object) -> tuple[np.ndarray, np.ndarray]:
+            return c_policy, lei_policy
+
+        solver.solve_egm_cached = fake_solve_egm_cached  # type: ignore[method-assign]
+
+        captured: list[np.ndarray] = []
+        original_forward = lead._distribution.forward
+
+        def capture_forward(policy_savings: np.ndarray, transition_matrix: np.ndarray) -> None:
+            captured.append(policy_savings.copy())
+            original_forward(policy_savings, transition_matrix)
+
+        lead._distribution.forward = capture_forward  # type: ignore[method-assign]
+
+        lead._update_distribution(
+            econ_decisions={},
+            households=lead.period_state.households,
+            market=lead.period_state.market,
+            constitution=lead.period_state.constitution,
+            public_goods=0.0,
+            transfer=0.0,
+        )
+        lead._update_distribution(
+            econ_decisions={},
+            households=lead.period_state.households,
+            market=lead.period_state.market,
+            constitution=lead.period_state.constitution,
+            public_goods=0.0,
+            transfer=1.25,
+        )
+
+        assert len(captured) == 2
+        assert np.allclose(captured[1] - captured[0], 1.25, atol=1e-10)
 
 
 class TestGiniComputation:

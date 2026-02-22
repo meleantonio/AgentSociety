@@ -567,8 +567,8 @@ class TestLLMEnginePoliticalIntegration:
         engine.set_observed_gini(0.35)
         # Should not raise
 
-    def test_pure_bellman_mode_returns_empty_decisions(self) -> None:
-        """In pure Bellman mode, collect_political_decisions returns empty decisions."""
+    def test_pure_bellman_mode_returns_bellman_actions(self) -> None:
+        """In pure Bellman mode, decisions include Bellman-derived votes."""
         from emergent_constitution.llm_engine import LLMDecisionEngine
         from emergent_constitution.rng import SimulationRNG
 
@@ -590,8 +590,8 @@ class TestLLMEnginePoliticalIntegration:
             market=market,
         )
         assert h.id in decisions
-        assert decisions[h.id].proposal is None
-        assert decisions[h.id].votes == {}
+        assert "flat_tax" in decisions[h.id].votes
+        assert isinstance(decisions[h.id].votes["flat_tax"], bool)
 
     def test_bellman_deviation_counters(self) -> None:
         """Deviation and alignment counters should start at zero."""

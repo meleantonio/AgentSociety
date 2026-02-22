@@ -166,6 +166,19 @@ def create_households(
             rng.gauss(config.initial_wealth_mean, config.initial_wealth_std),
         )
 
+        # Two-asset initial split (REQ-301): liquid bonds + illiquid capital.
+        # Keep a conservative liquid share at initialization so households can
+        # finance current-period consumption while preserving illiquid wealth.
+        if config.two_asset_mode:
+            liquid_share = 0.3
+            # Keep state internally consistent when b_min is binding.
+            wealth = max(wealth, config.b_min)
+            liquid = min(wealth, max(config.b_min, wealth * liquid_share))
+            illiquid = max(0.0, wealth - liquid)
+        else:
+            liquid = 0.0
+            illiquid = 0.0
+
         # Productivity index from stationary distribution
         prod_idx = _draw_from_distribution(rng, stationary_dist)
         productivity = productivity_grid[prod_idx]
@@ -210,6 +223,8 @@ def create_households(
                 leisure=0.5,
                 entrepreneurial_ability=entre_ability,
                 entrepreneurial_ability_index=ability_idx,
+                liquid=liquid,
+                illiquid=illiquid,
             )
         )
 
