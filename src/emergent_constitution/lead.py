@@ -1250,6 +1250,27 @@ class LeadV2:
                 update={"proposal_id": f"p{period:04d}_{idx:04d}_{proposal.proposer_id}"}
             )
 
+    def _collect_pure_bellman_votes(
+        self,
+        households: list[HouseholdState],
+        proposals: list[ConstitutionalProposal],
+        constitution: ConstitutionV2,
+    ) -> dict[str, dict[str, bool]]:
+        """Compute proposal-level Bellman votes for pure governance mode."""
+        if self._llm_engine is None or not proposals:
+            return {}
+
+        all_votes: dict[str, dict[str, bool]] = {}
+        for household in households:
+            agent_votes: dict[str, bool] = {}
+            for proposal in proposals:
+                vote_key = proposal.proposal_id or proposal.rule_name
+                agent_votes[vote_key] = self._llm_engine.evaluate_bellman_vote(
+                    household, proposal, constitution
+                )
+            all_votes[household.id] = agent_votes
+        return all_votes
+
     # ------------------------------------------------------------------
     # Step 7: Process governance (REQ-019..021, REQ-023)
     # ------------------------------------------------------------------
@@ -1319,10 +1340,17 @@ class LeadV2:
 
             self._assign_proposal_ids(proposals, t)
 
-            # Extract votes from political decisions
-            for agent_id, decision in political_decisions.items():
-                if decision.votes:
-                    all_votes[agent_id] = decision.votes
+            if self.config.pure_bellman_politics:
+                all_votes = self._collect_pure_bellman_votes(
+                    households=households,
+                    proposals=proposals,
+                    constitution=constitution,
+                )
+            else:
+                # Extract votes from political decisions
+                for agent_id, decision in political_decisions.items():
+                    if decision.votes:
+                        all_votes[agent_id] = decision.votes
         else:
             # Benchmark mode: rule-based governance (mirrors v1 citizen logic)
             # Shuffle for fairness

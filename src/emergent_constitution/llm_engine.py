@@ -304,6 +304,34 @@ class LLMDecisionEngine:
         proposed.rules[rule.name] = rule.model_copy(update={"parameters": params})
         return proposed
 
+    def evaluate_bellman_vote(
+        self,
+        agent: HouseholdState,
+        proposal: ConstitutionalProposal,
+        constitution: ConstitutionV2,
+    ) -> bool:
+        """Evaluate a proposal-level Bellman vote for a specific agent."""
+        if not self._value_function or not self._a_grid:
+            return False
+
+        from emergent_constitution.constitution_engine import ConstitutionEngine
+
+        try:
+            proposed_constitution = ConstitutionEngine().apply_proposal(constitution, proposal)
+        except ValueError:
+            return False
+
+        delta_v = evaluate_proposal(
+            value_function=self._value_function,
+            a_grid=self._a_grid,
+            agent=agent,
+            proposed_constitution=proposed_constitution,
+            current_constitution=constitution,
+            political_lambda=self._political_lambda,
+            observed_gini=self._observed_gini,
+        )
+        return delta_v > 0.0
+
     @property
     def bellman_deviation_count(self) -> int:
         """Number of times LLM overrode Bellman recommendation."""
@@ -514,6 +542,7 @@ class LLMDecisionEngine:
             tax_rules = constitution.get_tax_rules()
             tax_rule_name = tax_rules[0].name if tax_rules else None
             proposal_count = 0
+            max_delta_agent: tuple[HouseholdState, ConstitutionV2, float] | None = None
 
             for h in households:
                 counterfactual = self._build_counterfactual_constitution(h, constitution)
@@ -546,6 +575,31 @@ class LLMDecisionEngine:
                         proposal_count += 1
 
                 decisions[h.id] = PoliticalDecision(proposal=proposal, votes=votes)
+                if max_delta_agent is None or abs(delta_v) > abs(max_delta_agent[2]):
+                    max_delta_agent = (h, counterfactual, delta_v)
+
+            # Guarantee at least one concrete proposal when Bellman mode is
+            # active and a tax rule exists, avoiding degenerate empty rounds.
+            if proposal_count == 0 and tax_rule_name is not None and max_delta_agent is not None:
+                best_agent, best_counterfactual, _best_delta = max_delta_agent
+                proposed_rule = best_counterfactual.rules.get(tax_rule_name)
+                current_rule = constitution.rules.get(tax_rule_name)
+                if (
+                    proposed_rule is not None
+                    and current_rule is not None
+                    and proposed_rule.parameters != current_rule.parameters
+                ):
+                    decisions[best_agent.id] = PoliticalDecision(
+                        proposal=ConstitutionalProposal(
+                            proposer_id=best_agent.id,
+                            action="modify",
+                            rule_name=tax_rule_name,
+                            parameters=dict(proposed_rule.parameters),
+                            description="Bellman-derived fallback tax proposal",
+                        ),
+                        votes=decisions.get(best_agent.id, PoliticalDecision()).votes,
+                    )
+                    proposal_count = 1
             log.info(
                 "llm_engine.pure_bellman_politics",
                 n_agents=len(households),

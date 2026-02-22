@@ -349,6 +349,25 @@ class TestPureBellmanMode:
         assert lead._llm_engine._value_function is not None
         assert lead._llm_engine._a_grid is not None
 
+    def test_pure_bellman_generates_proposals_and_votes(self) -> None:
+        config = SimulationConfigV2(
+            num_agents=20,
+            max_periods=1,
+            seed=21,
+            use_llm=False,
+            benchmark_mode=True,
+            pure_bellman_politics=True,
+            proposal_interval=1,
+            observer_interval=1,
+        )
+        lead = LeadV2(config)
+        period_state = lead._advance_period(1)
+
+        assert len(period_state.proposals) > 0
+        assert len(period_state.votes) == len(period_state.proposals)
+        for outcome in period_state.votes:
+            assert outcome.total_eligible == config.num_agents
+
 
 class TestGovernanceVoteKeys:
     """Proposal-level vote keying should avoid rule-name collisions."""
