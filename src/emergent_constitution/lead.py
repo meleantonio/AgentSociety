@@ -498,6 +498,8 @@ class LeadV2:
         # Per-period entrepreneurial capital flows for stock-flow consistency.
         self._period_capital_debits: dict[str, float] = {}
         self._period_capital_credits: dict[str, float] = {}
+        self._period_principal_debits: dict[str, float] = {}
+        self._period_principal_credits: dict[str, float] = {}
 
         # Government sector (REQ-306..309)
         self._government = Government(
@@ -579,6 +581,8 @@ class LeadV2:
         # Reset period-level capital flow ledger.
         self._period_capital_debits = {}
         self._period_capital_credits = {}
+        self._period_principal_debits = {}
+        self._period_principal_credits = {}
 
         # Step 1: Draw shocks
         households, shocks = self._draw_shocks(t, households, shocks)
@@ -1052,11 +1056,12 @@ class LeadV2:
                 returned_capital = liquidate_firm(firm)
                 owner = household_map.get(firm.owner_id)
                 if owner is not None:
-                    # Firm capital is treated as rented from aggregate savings
-                    # (see FirmState docs), so liquidation does not move principal
-                    # onto owner balance sheets here.
+                    self._period_principal_credits[owner.id] = (
+                        self._period_principal_credits.get(owner.id, 0.0) + returned_capital
+                    )
                     log.debug(
                         "step5.firm_liquidated",
+                        owner_id=owner.id,
                         firm_id=firm.id,
                         returned_capital=returned_capital,
                     )
@@ -1103,13 +1108,15 @@ class LeadV2:
         aggregate_tfp = self.period_state.shocks.aggregate_tfp
         for h in households:
             decision = entre_decisions.get(h.id, EntrepreneurialDecision())
-            if decision.create_firm and h.wealth >= self.config.min_firm_capital:
+            available_principal = max(h.wealth - self.config.firm_entry_cost, 0.0)
+            invested_principal = min(max(decision.capital_investment, 0.0), available_principal)
+            if decision.create_firm and invested_principal >= self.config.min_firm_capital:
                 firm_tfp = h.entrepreneurial_ability * aggregate_tfp
                 new_firm = FirmState(
                     id=f"firm_{self._next_firm_id:04d}",
                     owner_id=h.id,
                     owner_ability=h.entrepreneurial_ability,
-                    capital=decision.capital_investment,
+                    capital=invested_principal,
                     labor_demand=decision.labor_demand,
                     tfp=firm_tfp,
                     rd_spend=decision.rd_spend,
@@ -1117,18 +1124,22 @@ class LeadV2:
                 self._next_firm_id += 1
                 updated_firms.append(new_firm)
 
-                # Entry cost is sunk and paid from household resources.
-                # Capital itself is modeled as rented, not principal-financed.
+                # Entry cost is sunk and principal is tracked in the dedicated
+                # entrepreneurial capital account.
                 capital_debit = self.config.firm_entry_cost
                 self._period_capital_debits[h.id] = (
                     self._period_capital_debits.get(h.id, 0.0) + capital_debit
+                )
+                self._period_principal_debits[h.id] = (
+                    self._period_principal_debits.get(h.id, 0.0) + invested_principal
                 )
 
                 log.debug(
                     "step5.firm_created",
                     firm_id=new_firm.id,
                     owner_id=h.id,
-                    capital=decision.capital_investment,
+                    principal_invested=invested_principal,
+                    entry_cost=self.config.firm_entry_cost,
                     tfp=round(firm_tfp, 4),
                 )
 
@@ -1592,6 +1603,8 @@ class LeadV2:
             firm_profit = firm_profit_by_owner.get(h.id, 0.0)
             capital_debit = self._period_capital_debits.get(h.id, 0.0)
             capital_credit = self._period_capital_credits.get(h.id, 0.0)
+            principal_debit = self._period_principal_debits.get(h.id, 0.0)
+            principal_credit = self._period_principal_credits.get(h.id, 0.0)
 
             if self.config.fix_entrepreneur_budget and h.id in owners_with_firms:
                 # Entrepreneurs are residual claimants: income = pi_f only.
@@ -1697,6 +1710,10 @@ class LeadV2:
                 new_liquid = h.liquid
                 new_illiquid = h.illiquid
             savings = new_wealth - h.wealth
+            new_entrepreneurial_capital = max(
+                0.0,
+                h.entrepreneurial_capital - principal_debit + principal_credit,
+            )
 
             # Update role based on firm ownership
             role = h.role
@@ -1717,6 +1734,7 @@ class LeadV2:
                     "wealth": new_wealth,
                     "liquid": new_liquid,
                     "illiquid": new_illiquid,
+                    "entrepreneurial_capital": new_entrepreneurial_capital,
                     "role": role,
                     "firm_id": firm_id_by_owner.get(h.id, None),
                 }

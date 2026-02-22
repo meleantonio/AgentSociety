@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import numpy as np
 import pytest
 
 from emergent_constitution.config import SimulationConfigV2
@@ -236,3 +237,34 @@ class TestOptimalLabor:
         assert solver._optimal_labor(ability=-1.0, capital=50.0, wage=1.0) == 0.0
         assert solver._optimal_labor(ability=2.0, capital=-10.0, wage=1.0) == 0.0
         assert solver._optimal_labor(ability=2.0, capital=50.0, wage=-1.0) == 0.0
+
+
+class TestStationaryDistribution:
+    def test_matches_left_eigenvector(self, config: SimulationConfigV2) -> None:
+        """Power-iteration stationary distribution should match eigenvector benchmark."""
+        ability_grid = [0.8, 1.0, 1.2]
+        transition = [
+            [0.7, 0.2, 0.1],
+            [0.1, 0.8, 0.1],
+            [0.2, 0.3, 0.5],
+        ]
+        solver = EntrepreneurialSolver(
+            config=config,
+            ability_grid=ability_grid,
+            ability_transition_matrix=transition,
+        )
+
+        stationary = np.array(solver._stationary_dist, dtype=np.float64)
+        assert stationary.shape == (3,)
+        assert float(np.sum(stationary)) == pytest.approx(1.0)
+
+        # Reference: left eigenvector of P associated with eigenvalue 1.
+        eigvals, eigvecs = np.linalg.eig(np.array(transition, dtype=np.float64).T)
+        idx = int(np.argmin(np.abs(eigvals - 1.0)))
+        ref = np.real(eigvecs[:, idx])
+        ref = ref / np.sum(ref)
+        if np.any(ref < 0.0):
+            ref = -ref
+        ref = ref / np.sum(ref)
+
+        assert np.max(np.abs(stationary - ref)) < 1e-10

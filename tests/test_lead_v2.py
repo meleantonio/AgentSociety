@@ -548,6 +548,50 @@ class TestExecuteProduction:
             assert len(firms) == 1
             assert firms[0].owner_id == rich_agent.id
 
+    def test_firm_creation_records_principal_debit(
+        self, short_mock_config: SimulationConfigV2
+    ) -> None:
+        """Firm entry should debit sunk cost and track invested principal separately."""
+        lead = LeadV2(short_mock_config)
+        owner = lead.period_state.households[0].model_copy(update={"wealth": 200.0})
+        market = lead.period_state.market
+        entre = {
+            owner.id: EntrepreneurialDecision(
+                create_firm=True,
+                capital_investment=40.0,
+                labor_demand=1.0,
+            )
+        }
+
+        firms = lead._execute_production([], entre, [owner], market)
+        assert len(firms) == 1
+        assert lead._period_capital_debits[owner.id] == pytest.approx(
+            short_mock_config.firm_entry_cost
+        )
+        assert lead._period_principal_debits[owner.id] == pytest.approx(40.0)
+
+    def test_firm_liquidation_records_principal_credit(
+        self, short_mock_config: SimulationConfigV2
+    ) -> None:
+        """Firm liquidation should credit remaining principal to owner ledger."""
+        lead = LeadV2(short_mock_config)
+        owner = lead.period_state.households[0]
+        market = lead.period_state.market
+        firm = FirmState(
+            id="firm_close",
+            owner_id=owner.id,
+            owner_ability=owner.entrepreneurial_ability,
+            capital=25.0,
+            labor_demand=1.0,
+            tfp=1.0,
+        )
+        entre = {owner.id: EntrepreneurialDecision(close_firm=True)}
+
+        firms = lead._execute_production([firm], entre, [owner], market)
+        assert firms == []
+        assert lead._period_capital_credits.get(owner.id, 0.0) == pytest.approx(0.0)
+        assert lead._period_principal_credits[owner.id] == pytest.approx(25.0)
+
     def test_output_uses_updated_labor_demand(self, short_mock_config: SimulationConfigV2) -> None:
         """Same-period output should reflect owner-updated labor demand."""
         lead = LeadV2(short_mock_config)
@@ -748,6 +792,32 @@ class TestUpdateStates:
         updated = lead._update_states([base], decisions, market, 0.0, firms=[])
         assert updated[0].liquid == pytest.approx(30.6, abs=1e-8)
         assert updated[0].illiquid == pytest.approx(73.5, abs=1e-8)
+
+    def test_entrepreneurial_capital_account_updates_with_principal_flows(self) -> None:
+        """Household entrepreneurial_capital should track principal debit/credit."""
+        config = SimulationConfigV2(
+            num_agents=20,
+            max_periods=1,
+            seed=13,
+            benchmark_mode=True,
+            observer_interval=1,
+        )
+        lead = LeadV2(config)
+        h = lead.period_state.households[0].model_copy(
+            update={
+                "wealth": 100.0,
+                "entrepreneurial_capital": 30.0,
+                "taxes_paid": 0.0,
+                "transfers_received": 0.0,
+            }
+        )
+        lead._period_principal_debits[h.id] = 12.0
+        lead._period_principal_credits[h.id] = 7.5
+        decisions = {h.id: EconomicDecision(consumption=0.0, leisure=1.0)}
+        market = lead.period_state.market.model_copy(update={"wage": 0.0, "interest_rate": 0.0})
+
+        updated = lead._update_states([h], decisions, market, 0.0, firms=[])
+        assert updated[0].entrepreneurial_capital == pytest.approx(25.5)
 
 
 class TestDistributionUpdate:
